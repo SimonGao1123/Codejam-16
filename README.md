@@ -1,6 +1,6 @@
 # Codejam-16
 Presentation Helper App: practice a presentation while it watches your posture, eye level and
-hands, listens to your pitch, volume and filler words, and shows a live transcript. Runs locally.
+hands, listens to your pitch, volume and filler words, and shows a live transcript. Runs locally. Made with electron and python backend service.
 
 | Folder | What |
 |---|---|
@@ -16,5 +16,8 @@ hands, listens to your pitch, volume and filler words, and shows a live transcri
 cd app && npm install && npm run dev
 ```
 
+
 The app starts the Python service in the background (needs [uv](https://docs.astral.sh/uv/)) and
 stops it when you quit. The service's output appears in the same terminal, prefixed `[service]`.
+
+
