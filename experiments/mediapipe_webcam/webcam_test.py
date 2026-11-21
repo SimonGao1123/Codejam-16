@@ -5,12 +5,19 @@ Shows the skeleton on your webcam feed plus live numbers, and an alert banner
 when one stays past its threshold:
   - shoulder tilt (degrees)          -> "Level your shoulders"  (vs calibration)
   - eye level: head pitch + eye gaze -> "Look up"               (vs calibration)
-  - hand angle (per hand) + speed    -> "Slow your hands"
+  - face visible                     -> "Face the camera"
+  - both hands visible               -> "Show both hands or step back"
+  - hand motion: none for ~10 s      -> "Use your hands"
+                 too fast / too busy -> "Slow your hands"
+                 same gesture looping-> "Vary your gestures"
+  - hand angle (per hand)            -> shown next to each wrist, no alert
 
-Calibration: stand the way you normally present, looking at the camera, then
-click "Calibrate" (or press c). It records your measurements for a couple of
-seconds and alerts when you drift too far from them. Posture and eye-level
-alerts stay off until you calibrate.
+Calibration: stand the way you normally present, looking at the camera, with
+your hands in their resting position, then click "Calibrate" (or press c). It
+records your measurements for a couple of seconds and alerts when you drift too
+far from them. Hands resting at that spot for ~10 s also counts as not using
+them. Posture and eye-level alerts stay off until you calibrate; the other hand
+alerts work right away.
 
 Run:   uv run webcam_test.py
        uv run webcam_test.py --camera 1     (if the wrong camera opens)
@@ -27,6 +34,7 @@ from pathlib import Path
 
 import cv2
 import mediapipe as mp
+import numpy as np
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
@@ -38,12 +46,13 @@ MODELS = {
 }
 
 POSE_CONNECTIONS = [
-    (0, 1), (1, 2), (2, 3), (3, 7), (0, 4), (4, 5), (5, 6), (6, 8), (9, 10),
+    (0, 1), (1, 2), (2, 3), (3, 7), (0, 4), (4, 5), (5, 6), (6, 8),
     (11, 12), (11, 13), (13, 15), (15, 17), (15, 19), (15, 21), (17, 19),
     (12, 14), (14, 16), (16, 18), (16, 20), (16, 22), (18, 20),
     (11, 23), (12, 24), (23, 24), (23, 25), (24, 26), (25, 27), (26, 28),
     (27, 29), (28, 30), (29, 31), (30, 32), (27, 31), (28, 32),
 ]
+POSE_MOUTH = (9, 10)        # mouth corners: not used, so not drawn
 HAND_CONNECTIONS = [
     (0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8),
     (5, 9), (9, 10), (10, 11), (11, 12), (9, 13), (13, 14), (14, 15), (15, 16),
@@ -58,8 +67,19 @@ FOREHEAD, CHIN = 10, 152                                       # face landmarks
 TILT_MAX_DEG = 6            # shoulder tilt this far from calibrated = uneven
 LOOK_DOWN_MAX_DEG = 15      # head pitched down this far past calibrated = looking down
 EYES_DOWN_MAX = 0.35        # eyeLookDown blendshape score (0-1) this far above calibrated = eyes down
-HAND_FAST = 3.0             # wrist speed in shoulder-widths per second (absolute, not calibrated)
-SPEED_WINDOW_S = 0.3        # speed is measured over this much history
+# Hand thresholds are absolute (not calibrated). Wrist positions are in shoulder widths from the
+# shoulder midpoint, so distance to the camera and body sway don't matter.
+FACE_MISSING_S = 1.0        # no face seen for this long = warn
+HANDS_MISSING_S = 1.5       # fewer than 2 hands seen for this long = warn
+HAND_STILL = 0.15           # average wrist speed (shoulder-widths/s) over the last 1 s below this = not moving
+HAND_STILL_S = 10           # not moving (or both hands at rest) for this long = warn
+REST_RADIUS = 0.3           # wrist within this many shoulder widths of its calibrated rest spot = at rest
+HAND_FAST = 3.0             # wrist speed over the last 0.3 s above this = too fast
+HAND_BUSY = 1.5             # average wrist speed over the last 5 s above this = too much motion
+REPEAT_WINDOW_S = 6.0       # repetition is checked over this much wrist history
+REPEAT_SCORE = 0.6          # autocorrelation peak (0-1) above this = same gesture looping
+REPEAT_MIN_AMP = 0.08       # ignore tiny motions (shoulder widths) when checking for repetition
+REPEAT_LAGS_S = (0.4, 2.5)  # a repeated gesture takes between this many seconds per cycle
 CALIBRATE_S = 2.0           # calibration records this long and keeps the median of each measurement
 BUTTON = (12, -60, 230, -16)  # calibrate button: x0, y0, x1, y1 (negative y = from frame bottom)
 
@@ -106,13 +126,14 @@ def make_landmarkers():
     return pose, hands, face
 
 
-def draw(frame, landmarks, connections, color):
+def draw(frame, landmarks, connections, color, skip=()):
     h, w = frame.shape[:2]
     pts = [(int(p.x * w), int(p.y * h)) for p in landmarks]
     for a, b in connections:
         cv2.line(frame, pts[a], pts[b], color, 2)
-    for p in pts:
-        cv2.circle(frame, p, 3, WHITE, -1)
+    for i, p in enumerate(pts):
+        if i not in skip:
+            cv2.circle(frame, p, 3, WHITE, -1)
 
 
 def shoulder_tilt(lm, w, h):
@@ -142,13 +163,75 @@ def hand_angle(hand, w, h):
     return math.degrees(math.atan2((b.x - a.x) * w, -(b.y - a.y) * h))
 
 
-def wrist_speed(history, width):
-    """Fastest wrist's speed over the history window, in shoulder-widths per second."""
-    if len(history) < 2:
-        return 0.0
-    (t0, w0), (t1, w1) = history[0], history[-1]
-    moved = [math.hypot(a[0] - b[0], a[1] - b[1]) for a, b in zip(w0, w1) if a and b]
-    return max(moved, default=0.0) / width / max(t1 - t0, 1e-6)
+class HandMotion:
+    """Keeps a few seconds of wrist positions and measures speed, busyness and repetition."""
+
+    RATE = 15                       # Hz; history is resampled to this for the repetition check
+
+    def __init__(self):
+        self.history = deque()      # (time, [(x, y) or None, (x, y) or None])
+        self.speeds = deque()       # (time, speed over the last 0.3 s)
+
+    def clear(self):
+        self.history.clear()
+        self.speeds.clear()
+
+    def add(self, now, wrists):
+        self.history.append((now, wrists))
+        while now - self.history[0][0] > REPEAT_WINDOW_S:
+            self.history.popleft()
+        self.speeds.append((now, self.speed(0.3)))
+        while now - self.speeds[0][0] > 5.0:
+            self.speeds.popleft()
+
+    def speed(self, window):
+        """Fastest wrist's speed over the last `window` seconds, in shoulder-widths per second."""
+        if not self.history:
+            return 0.0
+        recent = [e for e in self.history if self.history[-1][0] - e[0] <= window]
+        best = 0.0
+        for i in range(2):
+            seen = [(t, w[i]) for t, w in recent if w[i]]
+            if len(seen) >= 2:
+                (t0, a), (t1, b) = seen[0], seen[-1]
+                best = max(best, math.hypot(a[0] - b[0], a[1] - b[1]) / max(t1 - t0, 1e-6))
+        return best
+
+    def activity(self, window):
+        """Average of the 0.3 s speeds over the last `window` seconds (max 5 s). Unlike speed(window),
+        a gesture that ends where it started still counts as motion."""
+        recent = [v for t, v in self.speeds if self.speeds[-1][0] - t <= window]
+        return sum(recent) / len(recent) if recent else 0.0
+
+    def repetition(self):
+        """0-1: how strongly either wrist's path repeats itself (autocorrelation peak)."""
+        if not self.history or self.history[-1][0] - self.history[0][0] < 0.8 * REPEAT_WINDOW_S:
+            return 0.0
+        times = np.array([t for t, _ in self.history])
+        grid = np.arange(times[0], times[-1], 1 / self.RATE)
+        lo, hi = (int(s * self.RATE) for s in REPEAT_LAGS_S)
+        best = 0.0
+        for i in range(2):
+            mask = np.array([w[i] is not None for _, w in self.history])
+            if mask.mean() < 0.7:
+                continue
+            pts = np.array([w[i] for _, w in self.history if w[i]])
+            x = np.interp(grid, times[mask], pts[:, 0])
+            y = np.interp(grid, times[mask], pts[:, 1])
+            x, y = x - x.mean(), y - y.mean()
+            energy = (x * x + y * y).sum()
+            if math.sqrt(energy / len(grid)) < REPEAT_MIN_AMP:
+                continue
+            n = len(grid)
+            ac = np.array([(x[:n - k] * x[k:] + y[:n - k] * y[k:]).sum() / energy * n / (n - k)
+                           for k in range(min(hi + 2, n - 1))])
+            # a real repeat is a peak that comes after the correlation has dropped off
+            dipped = False
+            for k in range(1, len(ac) - 1):
+                dipped = dipped or ac[k] < 0.3
+                if dipped and lo <= k <= hi and ac[k] >= ac[k - 1] and ac[k] >= ac[k + 1]:
+                    best = max(best, float(ac[k]))
+        return min(best, 1.0)
 
 
 def label(frame, y, text, color=WHITE):
@@ -180,17 +263,18 @@ def draw_button(frame, text, active):
 class Calibration:
     """Records each measurement for CALIBRATE_S after start(), then keeps the medians as the baseline."""
 
-    KEYS = ("tilt", "pitch", "eyes")
+    KEYS = ("tilt", "pitch", "eyes")              # required
+    OPTIONAL = ("rest_l", "rest_r")               # resting wrist (x, y); None if resting out of frame
 
     def __init__(self):
-        self.baseline = None          # {"tilt": deg, "pitch": deg, "eyes": score} once calibrated
+        self.baseline = None          # {"tilt": deg, "pitch": deg, "eyes": score, "rest_l"/"rest_r": (x, y) or None}
         self.until = None             # recording ends at this time
         self.samples = {}
         self.message = "Stand normally, look at the camera, then calibrate"
 
     def start(self, now):
         self.until = now + CALIBRATE_S
-        self.samples = {k: [] for k in self.KEYS}
+        self.samples = {k: [] for k in self.KEYS + self.OPTIONAL}
 
     @property
     def recording(self):
@@ -210,9 +294,15 @@ class Calibration:
         if missing:
             self.message = f"Calibration failed: {', '.join(missing)} not seen - keep face and shoulders in frame"
             return True
-        self.baseline = {k: statistics.median(v) for k, v in self.samples.items()}
-        self.message = "Calibrated: tilt {tilt:+.1f} deg, head pitch {pitch:+.1f} deg, eyes down {eyes:.2f}".format(
-            **self.baseline)
+        self.baseline = {k: statistics.median(self.samples[k]) for k in self.KEYS}
+        for k in self.OPTIONAL:
+            # wrist must be seen in at least half the frames, otherwise treat it as resting out of frame
+            pts = self.samples[k]
+            enough = len(pts) >= len(self.samples["tilt"]) / 2
+            self.baseline[k] = tuple(statistics.median(c) for c in zip(*pts)) if enough else None
+        rest = sum(self.baseline[k] is not None for k in self.OPTIONAL)
+        self.message = ("Calibrated: tilt {tilt:+.1f} deg, head pitch {pitch:+.1f} deg, eyes down {eyes:.2f}, ".format(
+            **self.baseline) + f"resting hands in frame: {rest}/2")
         print(self.message)
         return True
 
@@ -240,10 +330,14 @@ def main():
 
     tilt_alert = Alert("Level your shoulders", hold_s=1.5)
     down_alert = Alert("Look up", hold_s=1.0)
-    hands_alert = Alert("Slow your hands", hold_s=0.4)
+    face_alert = Alert("Face the camera", hold_s=FACE_MISSING_S)
+    missing_alert = Alert("Show both hands or step back", hold_s=HANDS_MISSING_S)
+    still_alert = Alert("Use your hands", hold_s=HAND_STILL_S)
+    fast_alert = Alert("Slow your hands", hold_s=0.4)
+    repeat_alert = Alert("Vary your gestures", hold_s=1.0)
 
     calib = Calibration()
-    wrist_history = deque()               # (time, [wrist xy or None, wrist xy or None])
+    motion = HandMotion()
     last_ts, fps = 0, 0.0
     prev = time.time()
 
@@ -267,14 +361,16 @@ def main():
         y = 28
         label(frame, y, f"FPS {fps:.0f}   hands seen: {len(hand_res.hand_landmarks)}")
 
-        tilt_bad = down_bad = fast = False
+        tilt_bad = down_bad = fast = still = repeating = False
+        both_hands = len(hand_res.hand_landmarks) >= 2
         tilt = pitch = eyes = None
+        wrists = [None, None]
         base = calib.baseline
 
         # shoulders + hand speed (pose)
         if pose_res.pose_landmarks:
             lm = pose_res.pose_landmarks[0]
-            draw(frame, lm, POSE_CONNECTIONS, GREEN)
+            draw(frame, lm, POSE_CONNECTIONS, GREEN, skip=POSE_MOUTH)
             tilt, width = shoulder_tilt(lm, w, h)
             y += 26
             if base:
@@ -285,18 +381,31 @@ def main():
             else:
                 label(frame, y, f"shoulder tilt: {tilt:+.1f} deg")
 
-            # wrist speed normalized by shoulder width so distance to camera doesn't matter
-            wrists = [(lm[i].x * w, lm[i].y * h) if lm[i].visibility > 0.5 else None
+            # wrists in shoulder widths from the shoulder midpoint
+            mx, my = (lm[L_SHOULDER].x + lm[R_SHOULDER].x) / 2 * w, (lm[L_SHOULDER].y + lm[R_SHOULDER].y) / 2 * h
+            wrists = [((lm[i].x * w - mx) / width, (lm[i].y * h - my) / width) if lm[i].visibility > 0.5 else None
                       for i in (L_WRIST, R_WRIST)]
-            wrist_history.append((now, wrists))
-            while now - wrist_history[0][0] > SPEED_WINDOW_S:
-                wrist_history.popleft()
-            speed = wrist_speed(wrist_history, width)
-            fast = speed > HAND_FAST
+            motion.add(now, wrists)
+            speed, busy, repeat = motion.speed(0.3), motion.activity(5.0), motion.repetition()
+            fast = speed > HAND_FAST or busy > HAND_BUSY
+            # at rest = every hand with a calibrated rest spot is in view and within REST_RADIUS of it
+            rests = [base[k] if base else None for k in ("rest_l", "rest_r")]
+            at_rest = any(rests) and all(p and math.dist(r, p) < REST_RADIUS for r, p in zip(rests, wrists) if r)
+            for r in rests:
+                if r:
+                    cv2.circle(frame, (int(mx + r[0] * width), int(my + r[1] * width)), int(REST_RADIUS * width),
+                               GREEN if at_rest else WHITE, 1)
+            # stillness and repetition only count when both hands are actually in view
+            still = both_hands and (motion.activity(1.0) < HAND_STILL or at_rest)
+            repeating = both_hands and repeat > REPEAT_SCORE
+            still_s = now - still_alert.bad_since if still_alert.bad_since else 0
             y += 26
-            label(frame, y, f"hand speed: {speed:.1f} shoulder-widths/s", RED if fast else WHITE)
+            label(frame, y, f"hands: speed {speed:.1f}  avg {busy:.1f}  repeat {repeat:.2f}"
+                            + (f"  still {still_s:.0f}s" if still_s >= 1 else "")
+                            + ("  at rest" if at_rest else ""),
+                  RED if fast or repeating or still_s > HAND_STILL_S else WHITE)
         else:
-            wrist_history.clear()
+            motion.clear()
             y += 26
             label(frame, y, "no body detected - step back so shoulders are in frame", RED)
 
@@ -322,16 +431,18 @@ def main():
                 label(frame, y, f"eye level: head pitch {pitch:+.0f} deg, eyes down {eyes:.2f}")
         else:
             y += 26
-            label(frame, y, "no face detected", YELLOW)
+            label(frame, y, "no face detected", RED)
 
-        if calib.add(now, tilt=tilt, pitch=pitch, eyes=eyes) and calib.baseline:
-            for a in (tilt_alert, down_alert):
+        if calib.add(now, tilt=tilt, pitch=pitch, eyes=eyes, rest_l=wrists[0], rest_r=wrists[1]) and calib.baseline:
+            for a in (tilt_alert, down_alert, still_alert):
                 a.bad_since, a.visible_until = None, 0.0
 
         # alerts are suppressed while recording so calibrating doesn't trigger them
         if not calib.recording:
-            shown = [a.text for a, bad in ((tilt_alert, tilt_bad), (down_alert, down_bad), (hands_alert, fast))
-                     if a.update(bad, now)]
+            checks = ((face_alert, not face_res.face_landmarks), (tilt_alert, tilt_bad), (down_alert, down_bad),
+                      (missing_alert, not both_hands),
+                      (still_alert, still), (fast_alert, fast), (repeat_alert, repeating))
+            shown = [a.text for a, bad in checks if a.update(bad, now)]
             for i, text in enumerate(shown):
                 banner(frame, i, text)
 
@@ -349,7 +460,7 @@ def main():
             break
         if (key == ord("c") or clicked["calibrate"]) and not calib.recording:
             calib.start(now)
-            calib.message = "Recording calibration - stand normally and look at the camera"
+            calib.message = "Recording calibration - stand normally, hands at rest, look at the camera"
         clicked["calibrate"] = False
 
     cap.release()
