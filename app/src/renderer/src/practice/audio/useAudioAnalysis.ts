@@ -80,7 +80,7 @@ export function useAudioAnalysis(
       if (msg.type === 'voice') {
         const now = performance.now() / 1000
         setVoice(msg)
-        setWpm(msg.wpm)
+        setWpm(msg.wpm ?? null) // a missing value means no reading, not a crash
         const wpmTime = msg.captured_at ?? now
         setWpmUpdatedAt(wpmTime)
         wpmRef.current.push({ t: wpmTime, value: msg.wpm })
@@ -102,7 +102,10 @@ export function useAudioAnalysis(
         setScriptPosition(null)
       } else if (msg.type === 'script_position') {
         setScriptPosition(msg)
-      } else if (msg.type === 'session_score' && pendingScores.current.shift() === sessionNumber.current) {
+      } else if (
+        msg.type === 'session_score' &&
+        pendingScores.current.shift() === sessionNumber.current
+      ) {
         onScore(msg)
       }
     }
@@ -111,7 +114,7 @@ export function useAudioAnalysis(
       setPartial(msg.partial)
       setFillers(msg.fillers)
       setTotal(msg.total)
-      setWpm(msg.wpm)
+      setWpm(msg.wpm ?? null) // a missing value means no reading, not a crash
       if (msg.new_fillers.length) {
         const now = Date.now()
         setFlash((f) => ({ ...f, ...Object.fromEntries(msg.new_fillers.map((w) => [w, now])) }))

@@ -97,28 +97,28 @@ def test_pace_is_not_scored_without_enough_transcript_data():
     assert score_presentation(pace=None)["categories"]["speaking_pace"]["points"] is None
 
 
-def test_current_wpm_uses_recent_timed_words(vosk_model):
-    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+def test_current_wpm_uses_recent_timed_words(stt_model):
+    analyzer = AudioAnalyzer(stt_model, AlertBoard())
     analyzer.transcriber.word_times = [(i * 0.5, i * 0.5 + 0.2) for i in range(20)]
     assert analyzer.current_wpm() == pytest.approx(123.7, abs=0.1)
 
 
-def test_live_wpm_uses_partial_transcript_history(vosk_model):
-    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+def test_live_wpm_uses_partial_transcript_history(stt_model):
+    analyzer = AudioAnalyzer(stt_model, AlertBoard())
     analyzer.transcriber.pace_history.extend([(0, 0), (4, 8), (8, 18)])
     analyzer.transcriber.last_voiced_at = 8
     assert analyzer.transcriber.live_wpm() == 135
 
 
-def test_live_wpm_is_unavailable_during_a_pause(vosk_model):
-    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+def test_live_wpm_is_unavailable_during_a_pause(stt_model):
+    analyzer = AudioAnalyzer(stt_model, AlertBoard())
     analyzer.transcriber.pace_history.extend([(0, 0), (4, 8), (8, 18)])
     analyzer.transcriber.last_voiced_at = 6
     assert analyzer.transcriber.live_wpm() is None
 
 
-def test_final_pace_excludes_a_presentation_pause(vosk_model):
-    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+def test_final_pace_excludes_a_presentation_pause(stt_model):
+    analyzer = AudioAnalyzer(stt_model, AlertBoard())
     # Two ten-word phrases at the same rate, separated by a five-second pause.
     # The pause must not be counted as slow speech in the final pace score.
     analyzer.transcriber.word_times = [
@@ -136,10 +136,10 @@ def test_final_pace_excludes_a_presentation_pause(vosk_model):
     ],
 )
 def test_out_of_range_pace_posts_the_matching_live_alert(
-    vosk_model, seconds_per_word, expected_alert
+    stt_model, seconds_per_word, expected_alert
 ):
     board = AlertBoard()
-    analyzer = AudioAnalyzer(vosk_model, None, board)
+    analyzer = AudioAnalyzer(stt_model, board)
     # Forty words provide enough active speech for a reliable live estimate.
     analyzer.transcriber.word_times = [
         (i * seconds_per_word, i * seconds_per_word + 0.1) for i in range(40)
@@ -148,8 +148,8 @@ def test_out_of_range_pace_posts_the_matching_live_alert(
     assert expected_alert in board.active()
 
 
-def test_session_score_has_recording_relative_checkpoints(vosk_model):
-    session = Session(vosk_model)
+def test_session_score_has_recording_relative_checkpoints(stt_model):
+    session = Session(stt_model)
 def test_session_score_has_recording_relative_checkpoints(stt_model):
     session = Session(stt_model)
     session.audio.set_embedder(lambda texts: np.ones((len(texts), 1), dtype=np.float32))
@@ -262,3 +262,25 @@ def test_filler_alert_follows_rule_but_still_counts(stt_model, tmp_path):
     a.apply_settings(voice_rules(filler={"enabled": False}))
     msgs = feed_all(a, speech) + a.finish()
     assert msgs[-1]["fillers"]["like"] == 2 and not any(x.startswith("Filler") for x in board.active())
+
+
+def test_pace_from_real_speech_with_moonshine(stt_model, tmp_path):
+    # ~28 words of TTS speech, then 2 s of silence
+    speech = say("Today I will walk you through our sales results, our hiring plans, and the new "
+                 "product launch. First, sales grew by twelve percent compared to last quarter.", tmp_path)
+    a = AudioAnalyzer(stt_model, AlertBoard())
+    live = []
+    for i in range(0, len(speech), 2048):
+        a.feed(speech[i:i + 2048].astype(np.float32))
+        live.append(a.live_wpm())
+    readings = [w for w in live if w is not None]
+    assert readings and 80 < readings[-1] < 260            # live WPM while talking (partials)
+    feed_all(a, np.zeros(SR * 2, dtype=np.float32))
+    assert a.live_wpm() is None                            # paused: no live reading
+    a.finish()
+    t = a.transcriber
+    assert len(t.word_times) >= 20                         # finished lines spread into word times
+    assert all(s < e for s, e in t.word_times)
+    summary = a.pace_summary()
+    assert summary and 80 < summary["average_wpm"] < 260
+    print("\nlive WPM readings:", readings[-5:], "final:", summary)

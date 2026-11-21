@@ -388,4 +388,5 @@ class AudioAnalyzer:
             "new_fillers": new_fillers,
             "fillers": fillers,
             "total": sum(fillers.values()),
+            "wpm": self.live_wpm(),                 # recent rate incl. the line still being spoken
         }
