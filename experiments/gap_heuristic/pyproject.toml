@@ -1,7 +1,7 @@
 [project]
 name = "gap-heuristic-test"
 version = "0.1.0"
-description = "Live mic transcript with um/uh detection (faster-whisper + Silero VAD gap heuristic)"
+description = "Live mic transcript with um/uh detection (Vosk + faster-whisper + Silero VAD gap heuristic)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "faster-whisper>=1.1",
@@ -9,6 +9,7 @@ dependencies = [
     "sounddevice>=0.5",
     "numpy",
     "av<17",
+    "vosk",
 ]
 
 [tool.uv]
