@@ -7,7 +7,7 @@ all the calculations and replies with what to draw on top of the video.
 - Transport: WebSocket at **`ws://127.0.0.1:<port>/webcam`**, JSON text messages. The port is chosen by the Electron app,
   which starts `service/` itself (`app/src/main/analysisService.ts`); the same service also serves the audio side at `/audio`
   (`audio-protocol.md`).
-- TypeScript types: `app/src/renderer/src/practice/webcamProtocol.ts`. Keep this file and that one in sync.
+- TypeScript types: `app/src/renderer/src/practice/camera/webcamProtocol.ts`. Keep this file and that one in sync.
 - Electron reconnects every second if the service isn't running, and drops frames instead of
   queueing them when the service falls behind.
 
@@ -45,6 +45,34 @@ countdown, speeds) instead of the wall clock, so recorded sessions replay identi
 The service runs the 2 s get-into-position pause and the 2 s recording, timed by the `t` of the
 frames that follow.
 
+### `settings`: the Live alerts tab's rules
+
+Sent when the connection opens and whenever a rule changes on the Live alerts tab.
+
+```json
+{"type": "settings", "rules": {
+  "tilt": {"enabled": true, "threshold": 6, "duration": 1.5, "cooldown": 0},
+  "face": {"enabled": false, "threshold": null, "duration": 1, "cooldown": 0},
+  ...
+}}
+```
+
+| Rule id | Alert | Threshold |
+|---|---|---|
+| `tilt` | Level your shoulders | degrees from calibrated |
+| `look_down` | Look up | degrees of head pitch below calibrated |
+| `face` | Face the camera | — |
+| `hands_missing` | Show both hands or step back | — |
+| `still` | Use your hands | — |
+| `fast` | Slow your hands | wrist speed, shoulder widths / s |
+| `repeat` | Vary your gestures | % self-similarity (0.8 score = 80) |
+| `volume`, `pitch`, `quiet`, `filler` | voice / filler alerts (applied by the audio side, see `audio-protocol.md`) | |
+
+`duration` = seconds the problem must last before the alert shows; `cooldown` = seconds after an
+alert disappears before it can show again; a disabled rule never shows. Without a `settings`
+message the service uses the same defaults as the Live alerts tab. The alert *style* (banner /
+compact / silent) isn't sent: Electron applies it when drawing `alerts`.
+
 ## Python → Electron
 
 ### `state`: send one per `frame` (the overlay Electron draws until the next one arrives)
@@ -74,7 +102,7 @@ frames that follow.
 | Field                 | Drawn as                                                                                             |
 | --------------------- | ---------------------------------------------------------------------------------------------------- |
 | `lines`               | Status lines, top-left, under Electron's own FPS line. `color`: `white` / `red` / `yellow` / `green` |
-| `alerts`              | Red banners, centered, stacked below the status lines                                                |
+| `alerts`              | Drawn in the Live alerts style: banner (wide yellow box), compact (pill at the top right), silent (none) |
 | `rest_circles`        | Thin circles; `r` is a fraction of the video width; `active` = green                                 |
 | `hand_labels`         | Yellow text next to the point (Electron offsets it by +10, +20 px)                                   |
 | `calibration.phase`   | `idle` / `waiting` (big countdown from `remaining`) / `recording`; also sets the button label        |

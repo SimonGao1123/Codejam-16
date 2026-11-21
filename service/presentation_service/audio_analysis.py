@@ -3,6 +3,7 @@ voice monitor (pitch / volume) and 30 ms frames for the transcriber (Vosk + fill
 Message format: docs/audio-protocol.md."""
 
 import threading
+import time
 
 import numpy as np
 
@@ -10,6 +11,8 @@ from .transcript import FRAME, Transcriber
 from .voice import BLOCK_SIZE, BLOCK_SECONDS, VoiceCalibration, VoiceMonitor
 
 VOICE_EVERY_BLOCKS = 2          # send a voice reading every 100 ms
+VOICE_RULES = {VoiceMonitor.VOLUME_SPIKE: "volume", VoiceMonitor.PITCH_SPIKE: "pitch",
+               VoiceMonitor.QUIET: "quiet"}   # alert text -> Live alerts rule id
 
 
 class AudioAnalyzer:
@@ -17,16 +20,40 @@ class AudioAnalyzer:
         self.alerts = alerts                        # shared AlertBoard, shown on the webcam overlay
         self.transcriber = Transcriber(vosk_model, whisper_model)
         self._calibrate_requested = threading.Event()
+        self.settings = {}                          # Live alerts rules, see apply_settings()
+        self.last_filler_alert = -float("inf")
         self.reset()
+
+    def apply_settings(self, rules):
+        """Live alerts settings for the voice rules (volume, pitch, quiet) and filler words."""
+        self.settings = rules
+        self._configure_voice()
+
+    def _configure_voice(self):
+        v = self.voice
+        for rule_id, alert_rule, attr in (("volume", v.volume_spike, "volume_jump_db"),
+                                          ("pitch", v.pitch_spike, "pitch_jump_semitones"),
+                                          ("quiet", v.quiet, "quiet_drop_db")):
+            s = self.settings.get(rule_id)
+            if s:
+                alert_rule.duration_seconds = float(s["duration"])
+                alert_rule.cooldown_seconds = float(s["cooldown"])
+                if s.get("threshold") is not None:
+                    setattr(v, attr, float(s["threshold"]))
+
+    def enabled(self, rule_id):
+        return self.settings.get(rule_id, {}).get("enabled", True)
 
     def reset(self):
         """New practice session: fresh transcript, filler counts and voice baseline."""
         self.voice = VoiceMonitor()
+        self._configure_voice()                     # a new monitor keeps the Live alerts settings
         self.voice_calibration = VoiceCalibration(self.voice)
         self.transcriber.reset()
         self.pending = np.zeros(0, dtype=np.float32)
         self.voice_pos = self.speech_pos = 0        # samples consumed by each side
         self.blocks = 0
+        self.recent_pitches = []                    # every 50 ms block's pitch since the last voice message
 
     def set_whisper(self, model):
         self.transcriber.whisper = model
@@ -65,7 +92,10 @@ class AudioAnalyzer:
                 self.voice_calibration.collect(block, self.blocks)
             else:
                 for alert in self.voice.process(block, self.blocks * BLOCK_SECONDS):
-                    self.alerts.post(alert)
+                    if self.enabled(VOICE_RULES[alert]):
+                        self.alerts.post(alert)
+            p = self.voice.latest_pitch_hz
+            self.recent_pitches.append(round(float(p), 1) if p else None)
             if self.blocks % VOICE_EVERY_BLOCKS == 0:
                 out.append(self.voice_message())
 
@@ -100,15 +130,25 @@ class AudioAnalyzer:
             if kind == "sentence":
                 sentences.append(value)
             elif kind == "filler":
-                fillers.append(value)
-                self.alerts.post(f"Filler: {value}" if value != "filler?" else "Filler?")
+                fillers.append(value)               # always counted; the alert follows the rule
+                cooldown = float(self.settings.get("filler", {}).get("cooldown", 0))
+                now = time.monotonic()
+                if self.enabled("filler") and now - self.last_filler_alert >= cooldown:
+                    self.last_filler_alert = now
+                    self.alerts.post(f"Filler: {value}" if value != "filler?" else "Filler?")
 
     def voice_message(self):
         v, cal = self.voice, self.voice_calibration
+        pitches, self.recent_pitches = self.recent_pitches, []
         return {
             "type": "voice",
             "pitch_hz": round(v.latest_pitch_hz, 1) if v.latest_pitch_hz else None,
+            "pitches": pitches,                     # one per 50 ms block, oldest first (for the graph)
             "volume_dbfs": round(float(v.latest_volume_dbfs), 1),
+            # reference pitch for the graph, and the pitch where a spike alert would fire
+            "typical_hz": round(float(v.typical_pitch_hz), 1) if v.typical_pitch_hz else None,
+            "spike_hz": (round(float(v.typical_pitch_hz) * 2 ** (v.pitch_jump_semitones / 12), 1)
+                         if v.typical_pitch_hz else None),
             "calibrated": v.calibrated_baseline is not None,
             "calibrating": cal.active,
             "message": cal.message,

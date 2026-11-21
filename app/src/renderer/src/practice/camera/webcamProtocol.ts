@@ -5,6 +5,8 @@
 // sends the raw landmarks; Python does all the calculations and replies with an overlay
 // state that Electron draws on top of the video, the same way webcam_test.py does.
 
+import type { RuleSettings } from '../../liveAlert/ruleDefinitions'
+
 /** The service is started by the main process on a free port (src/main/analysisService.ts). */
 export const webcamAnalysisUrl = (): string => `ws://127.0.0.1:${window.api.servicePort}/webcam`
 
@@ -41,7 +43,12 @@ export interface CalibrateMessage {
   t: number
 }
 
-export type ClientMessage = FrameMessage | CalibrateMessage
+export interface SettingsMessage {
+  type: 'settings' // the Live alerts tab's rules; sent on connect and whenever they change
+  rules: Record<string, RuleSettings> // rule id (ruleDefinitions.ts) -> settings
+}
+
+export type ClientMessage = FrameMessage | CalibrateMessage | SettingsMessage
 
 // ---- Python -> Electron
 

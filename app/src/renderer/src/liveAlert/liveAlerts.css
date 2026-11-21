@@ -88,6 +88,14 @@ body,
   display: grid;
   gap: 6px;
 }
+.la .la-group {
+  margin: 8px 0 4px 12px;
+  color: #a79fc4;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
 .la-rule {
   display: flex;
   align-items: center;

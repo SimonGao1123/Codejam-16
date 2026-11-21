@@ -5,10 +5,11 @@
 
 import { useEffect, useImperativeHandle, useRef } from 'react'
 
-import { WebcamAnalysisClient } from './webcamAnalysisClient'
-import { drawLandmarks, drawOverlay } from './webcamDraw'
-import { createLandmarkers, detect, type Landmarkers } from './webcamLandmarkers'
-import type { ClientMessage, StateMessage } from './webcamProtocol'
+import { useAlertPreferences } from '../../liveAlert/useAlertPreferences'
+import { WebcamAnalysisClient } from '../camera/webcamAnalysisClient'
+import { drawLandmarks, drawOverlay } from '../camera/webcamDraw'
+import { createLandmarkers, detect, type Landmarkers } from '../camera/webcamLandmarkers'
+import type { ClientMessage, StateMessage } from '../camera/webcamProtocol'
 
 export interface WebcamStatus {
   ready: boolean // models loaded and camera frames being analysed
@@ -40,6 +41,9 @@ export default function WebcamView({ ref, stream, onStatus }: Props): React.JSX.
   const analysingRef = useRef(false)
   const errorRef = useRef<string | null>(null)
   const lastTRef = useRef(0) // MediaPipe needs strictly increasing timestamps, across sessions too
+  // Live alerts tab settings: rules go to Python, the style decides how alerts are drawn
+  const [preferences] = useAlertPreferences()
+  const preferencesRef = useRef(preferences)
 
   useImperativeHandle(
     ref,
@@ -60,6 +64,7 @@ export default function WebcamView({ ref, stream, onStatus }: Props): React.JSX.
     let cancelled = false
     const client = new WebcamAnalysisClient()
     clientRef.current = client
+    client.setSettings({ type: 'settings', rules: preferencesRef.current.rules })
     createLandmarkers().then(
       (lm) => {
         if (cancelled) lm.close()
@@ -100,6 +105,12 @@ export default function WebcamView({ ref, stream, onStatus }: Props): React.JSX.
     }
   }, [onStatus])
 
+  // Live alerts changes: tell Python right away (the client also re-sends them after a reconnect)
+  useEffect(() => {
+    preferencesRef.current = preferences
+    clientRef.current?.setSettings({ type: 'settings', rules: preferences.rules })
+  }, [preferences])
+
   // per-frame analysis: while the session's camera stream is on
   useEffect(() => {
     const video = videoRef.current!
@@ -133,11 +144,12 @@ export default function WebcamView({ ref, stream, onStatus }: Props): React.JSX.
       const ctx = canvas.getContext('2d')!
       ctx.clearRect(0, 0, canvas.width, canvas.height)
       drawLandmarks(ctx, frame)
-      drawOverlay(ctx, client.latest, {
-        fps,
-        handsSeen: frame.hands.length,
-        connected: client.connected
-      })
+      drawOverlay(
+        ctx,
+        client.latest,
+        { fps, handsSeen: frame.hands.length, connected: client.connected },
+        preferencesRef.current.style
+      )
     }
 
     video.srcObject = stream

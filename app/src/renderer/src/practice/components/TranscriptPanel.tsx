@@ -4,14 +4,15 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-import { AudioAnalysisClient } from './audioAnalysisClient'
-import { captureMic } from './audioCapture'
+import { AudioAnalysisClient } from '../audio/audioAnalysisClient'
+import { captureMic } from '../audio/audioCapture'
+import PitchGraph, { PITCH_WINDOW_S, type PitchSample } from './PitchGraph'
 import {
   FILLER_WORDS,
   type FillerWord,
   type TranscriptMessage,
   type VoiceMessage
-} from './audioProtocol'
+} from '../audio/audioProtocol'
 
 type Props = {
   micStream: MediaStream | null
@@ -31,6 +32,7 @@ export default function TranscriptPanel({ micStream, running }: Props): React.JS
   const [total, setTotal] = useState(0)
   const [flash, setFlash] = useState<Partial<Record<FillerWord, number>>>({})
   const [voice, setVoice] = useState<VoiceMessage | null>(null)
+  const pitchRef = useRef<PitchSample[]>([]) // last PITCH_WINDOW_S of readings, for the graph
 
   // connection to the Python service: for as long as the practice page is open
   useEffect(() => {
@@ -38,8 +40,16 @@ export default function TranscriptPanel({ micStream, running }: Props): React.JS
     clientRef.current = client
     client.onConnectionChange = setConnected
     client.onMessage = (msg) => {
-      if (msg.type === 'voice') setVoice(msg)
-      else applyTranscript(msg)
+      if (msg.type === 'voice') {
+        setVoice(msg)
+        const now = performance.now() / 1000
+        const samples = pitchRef.current
+        // one reading per 50 ms block; the newest is "now"
+        msg.pitches.forEach((hz, i) =>
+          samples.push({ t: now - (msg.pitches.length - 1 - i) * 0.05, hz })
+        )
+        while (samples.length && samples[0].t < now - PITCH_WINDOW_S - 1) samples.shift()
+      } else applyTranscript(msg)
     }
     function applyTranscript(msg: TranscriptMessage): void {
       if (msg.new_sentences.length) setSentences((s) => [...s, ...msg.new_sentences])
@@ -68,6 +78,7 @@ export default function TranscriptPanel({ micStream, running }: Props): React.JS
     setFillers(NO_FILLERS)
     setTotal(0)
     setVoice(null)
+    pitchRef.current = []
     client.send({ type: 'session_start' })
     captureMic(micStream, (samples) => client.sendAudio(samples)).then(
       (c) => (stopped ? c.stop() : (capture = c)),
@@ -97,49 +108,72 @@ export default function TranscriptPanel({ micStream, running }: Props): React.JS
   const empty = !sentences.length && !partial
 
   return (
-    <section className="ph-transcript" aria-labelledby="ph-transcript-heading">
-      <div className="ph-card-head">
-        <h2 id="ph-transcript-heading">Transcript</h2>
-        <span>
-          {!connected
-            ? 'Speech analysis not connected'
-            : listening
-              ? voice?.calibrating
-                ? voice.message
-                : voice?.pitch_hz
-                  ? `Listening · ${voice.pitch_hz.toFixed(0)} Hz · ${voice.volume_dbfs.toFixed(0)} dBFS`
-                  : 'Listening'
-              : running
-                ? 'Microphone off'
+    <>
+      <section className="ph-pitch" aria-labelledby="ph-pitch-heading">
+        <div className="ph-card-head">
+          <h2 id="ph-pitch-heading">Voice pitch</h2>
+          <span>
+            {listening && voice
+              ? voice.pitch_hz
+                ? `${voice.pitch_hz.toFixed(0)} Hz`
+                : 'Not speaking'
+              : listening
+                ? 'Waiting for audio'
                 : 'Starts with your practice session'}
-        </span>
-      </div>
-      <div className="ph-fillers" aria-label={`Filler words: ${total}`}>
-        <div className="ph-filler-total">
-          <strong>{total}</strong>
-          <span>filler words</span>
-        </div>
-        {FILLER_WORDS.map((word) => (
-          <span key={word} className="ph-filler" data-flash={Boolean(flash[word])}>
-            {word === 'filler?' ? 'um?' : word} <b>{fillers[word] ?? 0}</b>
           </span>
-        ))}
-      </div>
-      <div className="ph-transcript-text" ref={scrollRef} aria-live="polite">
-        {empty ? (
-          <p className="ph-transcript-empty">
-            {listening ? 'Start speaking…' : 'Your words will appear here as you practice.'}
-          </p>
-        ) : (
-          <p>
-            {sentences.map((s, i) => (
-              <span key={i}>{highlightFillers(s)} </span>
-            ))}
-            {partial && <span className="ph-partial">{partial}</span>}
-          </p>
-        )}
-      </div>
-    </section>
+        </div>
+        <PitchGraph
+          samples={pitchRef}
+          typicalHz={voice?.typical_hz ?? null}
+          spikeHz={voice?.spike_hz ?? null}
+          calibrated={voice?.calibrated ?? false}
+          live={listening}
+        />
+      </section>
+      <section className="ph-transcript" aria-labelledby="ph-transcript-heading">
+        <div className="ph-card-head">
+          <h2 id="ph-transcript-heading">Transcript</h2>
+          <span>
+            {!connected
+              ? 'Speech analysis not connected'
+              : listening
+                ? voice?.calibrating
+                  ? voice.message
+                  : voice?.pitch_hz
+                    ? `Listening · ${voice.pitch_hz.toFixed(0)} Hz · ${voice.volume_dbfs.toFixed(0)} dBFS`
+                    : 'Listening'
+                : running
+                  ? 'Microphone off'
+                  : 'Starts with your practice session'}
+          </span>
+        </div>
+        <div className="ph-fillers" aria-label={`Filler words: ${total}`}>
+          <div className="ph-filler-total">
+            <strong>{total}</strong>
+            <span>filler words</span>
+          </div>
+          {FILLER_WORDS.map((word) => (
+            <span key={word} className="ph-filler" data-flash={Boolean(flash[word])}>
+              {word === 'filler?' ? 'um?' : word} <b>{fillers[word] ?? 0}</b>
+            </span>
+          ))}
+        </div>
+        <div className="ph-transcript-text" ref={scrollRef} aria-live="polite">
+          {empty ? (
+            <p className="ph-transcript-empty">
+              {listening ? 'Start speaking…' : 'Your words will appear here as you practice.'}
+            </p>
+          ) : (
+            <p>
+              {sentences.map((s, i) => (
+                <span key={i}>{highlightFillers(s)} </span>
+              ))}
+              {partial && <span className="ph-partial">{partial}</span>}
+            </p>
+          )}
+        </div>
+      </section>
+    </>
   )
 }
 

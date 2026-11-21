@@ -57,24 +57,34 @@ CALIBRATE_S = 2.0           # calibration then records this long and keeps the m
 
 
 class Alert:
-    """Fires once a condition has held for `hold_s`, stays on screen `show_s` after it clears."""
+    """Fires once a condition has held for `hold_s`, stays on screen `show_s` after it clears, then
+    can't fire again for `cooldown_s`. All three (and `enabled`) come from the Live alerts settings."""
 
-    def __init__(self, text, hold_s, show_s=1.5):
-        self.text, self.hold_s, self.show_s = text, hold_s, show_s
-        self.bad_since = None
-        self.visible_until = 0.0
+    def __init__(self, text, hold_s, show_s=1.5, cooldown_s=0.0):
+        self.text, self.hold_s, self.show_s, self.cooldown_s = text, hold_s, show_s, cooldown_s
+        self.enabled = True
+        self.reset()
 
     def update(self, bad, now):
+        if not self.enabled:
+            self.reset()
+            return False
         if not bad:
             self.bad_since = None
         elif self.bad_since is None:
             self.bad_since = now
-        elif now - self.bad_since >= self.hold_s:
+        elif now - self.bad_since >= self.hold_s and (self.showing or now >= self.ready_at):
             self.visible_until = now + self.show_s
-        return now < self.visible_until
+        was_showing, self.showing = self.showing, now < self.visible_until
+        if was_showing and not self.showing:
+            self.ready_at = now + self.cooldown_s
+        return self.showing
+
+    def configure(self, enabled, duration, cooldown):
+        self.enabled, self.hold_s, self.cooldown_s = enabled, duration, cooldown
 
     def reset(self):
-        self.bad_since, self.visible_until = None, 0.0
+        self.bad_since, self.visible_until, self.showing, self.ready_at = None, 0.0, False, 0.0
 
 
 def points(raw):
@@ -302,6 +312,23 @@ class WebcamAnalyzer:
         self.motion = HandMotion()
         self.both_seen_at = -math.inf       # last time both hands were detected
         self.last_t = 0.0
+        # Live alerts rule id -> (alert, threshold setter); thresholds default to the constants above
+        self.limits = {"tilt": TILT_MAX_DEG, "look_down": LOOK_DOWN_MAX_DEG, "fast": HAND_FAST,
+                       "repeat": REPEAT_SCORE}
+        self.rules = {"tilt": self.tilt_alert, "look_down": self.down_alert, "face": self.face_alert,
+                      "hands_missing": self.missing_alert, "still": self.still_alert,
+                      "fast": self.fast_alert, "repeat": self.repeat_alert}
+
+    def apply_settings(self, rules):
+        """Live alerts settings: {rule id: {enabled, threshold, duration, cooldown}}."""
+        for rule_id, alert in self.rules.items():
+            s = rules.get(rule_id)
+            if not s:
+                continue
+            alert.configure(bool(s["enabled"]), float(s["duration"]), float(s["cooldown"]))
+            if rule_id in self.limits and s.get("threshold") is not None:
+                # the repeat slider is a percentage; the score is 0-1
+                self.limits[rule_id] = s["threshold"] / 100 if rule_id == "repeat" else float(s["threshold"])
 
     def calibrate(self, t=None):
         """Start calibration. Timed by the frames that follow; `t` defaults to the last frame's time."""
@@ -334,7 +361,7 @@ class WebcamAnalyzer:
             tilt, width = shoulder_tilt(lm, w, h)
             if base:
                 off = tilt - base["tilt"]
-                tilt_bad = abs(off) > TILT_MAX_DEG
+                tilt_bad = abs(off) > self.limits["tilt"]
                 lines.append(line(f"shoulder tilt: {tilt:+.1f} deg  ({off:+.1f} vs calibrated)",
                                   "red" if tilt_bad else "white"))
             else:
@@ -348,7 +375,7 @@ class WebcamAnalyzer:
                               for j, i in enumerate((L_WRIST, R_WRIST))]
             self.motion.add(now, wrists, match_hands(hand_points, pose_wrists_px, w, h))
             speed, busy = self.motion.speed(0.3), self.motion.activity(5.0)
-            fast = speed > HAND_FAST or busy > HAND_BUSY
+            fast = speed > self.limits["fast"] or busy > HAND_BUSY
             # at rest = every hand with a calibrated rest spot is in view and within REST_RADIUS of it
             rests = [base[k] if base else None for k in ("rest_l", "rest_r")]
             at_rest = any(rests) and all(p and math.dist(r, p) < REST_RADIUS for r, p in zip(rests, wrists) if r)
@@ -360,7 +387,7 @@ class WebcamAnalyzer:
                                          "r": round(REST_RADIUS * width / w, 4), "active": bool(at_rest)})
             # stillness and repetition only count when both hands are actually in view
             still = both_recent and (self.motion.activity(1.0) < HAND_STILL or at_rest)
-            repeating = both_recent and repeat > REPEAT_SCORE
+            repeating = both_recent and repeat > self.limits["repeat"]
             still_s = now - self.still_alert.bad_since if self.still_alert.bad_since else 0
             lines.append(line(f"hands: speed {speed:.1f}  avg {busy:.1f}  repeat {repeat:.2f}"
                               + (f" ({repeat_where})" if repeat_where and repeat > 0.3 else "")
@@ -383,7 +410,7 @@ class WebcamAnalyzer:
             eyes = eyes_down(face["blendshapes"])
             if base:
                 down, eyes_off = pitch - base["pitch"], eyes - base["eyes"]
-                down_bad = down > LOOK_DOWN_MAX_DEG or eyes_off > EYES_DOWN_MAX
+                down_bad = down > self.limits["look_down"] or eyes_off > EYES_DOWN_MAX
                 lines.append(line(f"eye level: head {down:+.0f} deg down, eyes down {eyes_off:+.2f}  (vs calibrated)",
                                   "red" if down_bad else "white"))
             else:

@@ -85,3 +85,50 @@ def test_extra_lines_and_alerts_from_audio_side():
     state = WebcamAnalyzer().process(frame(0.0), extra_lines=[{"text": "voice: 180 Hz", "color": "white"}],
                                      extra_alerts=["Filler: um"])
     assert state["lines"][-1]["text"] == "voice: 180 Hz" and "Filler: um" in state["alerts"]
+
+
+def rules(**changes):
+    """Live alerts settings with defaults, plus {rule_id: {field: value}} changes."""
+    base = {r: {"enabled": True, "threshold": None, "duration": d, "cooldown": 0}
+            for r, d in (("tilt", 1.5), ("look_down", 1.0), ("face", 1.0), ("hands_missing", 1.5),
+                         ("still", 10), ("fast", 0.4), ("repeat", 1.0))}
+    for rule_id, change in changes.items():
+        base[rule_id] = {**base[rule_id], **change}
+    return base
+
+
+def test_disabled_rule_never_shows():
+    a = WebcamAnalyzer()
+    a.apply_settings(rules(face={"enabled": False}))
+    first, _ = run(a, 4, face=lambda t: t < 1)
+    assert "Face the camera" not in first
+
+
+def test_duration_setting_changes_when_alert_shows():
+    a = WebcamAnalyzer()
+    a.apply_settings(rules(face={"duration": 2.5}))
+    first, _ = run(a, 6, face=lambda t: t < 1)
+    assert first["Face the camera"] == 3.5
+
+
+def test_cooldown_keeps_alert_away_after_it_clears():
+    def shown_times(cooldown):
+        a = WebcamAnalyzer()
+        a.apply_settings(rules(face={"cooldown": cooldown}))
+        times, gone = [], True
+        for i in range(10 * FPS):                     # face disappears for 1.5 s of every 3 s
+            t = i / FPS
+            state = a.process(frame(t, face=(t % 3) < 1.5))
+            showing = "Face the camera" in state["alerts"]
+            if showing and gone:
+                times.append(round(t, 1))
+            gone = not showing
+        return times
+    assert len(shown_times(0)) == 3                 # every flicker
+    assert len(shown_times(20)) == 1                # then held back by the cooldown
+
+
+def test_threshold_settings_reach_the_checks():
+    a = WebcamAnalyzer()
+    a.apply_settings(rules(tilt={"threshold": 3}, repeat={"threshold": 90}, fast={"threshold": 5}))
+    assert a.limits == {"tilt": 3.0, "look_down": 15, "fast": 5.0, "repeat": 0.9}

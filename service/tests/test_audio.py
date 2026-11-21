@@ -41,7 +41,11 @@ def test_tone_gives_pitch_and_volume(vosk_model):
     tone = 0.2 * np.sin(2 * np.pi * 200 * t)
     msgs = [m for m in feed_all(AudioAnalyzer(vosk_model, None, AlertBoard()), tone) if m["type"] == "voice"]
     assert len(msgs) == 20                                      # every 100 ms
+    assert all(len(m["pitches"]) == 2 for m in msgs)            # both 50 ms readings in each
     assert abs(msgs[-1]["pitch_hz"] - 200) < 5 and -20 < msgs[-1]["volume_dbfs"] < -10
+    # after ~1 s of voice the running typical pitch exists; a spike fires 9 semitones above it
+    assert msgs[0]["typical_hz"] is None and abs(msgs[-1]["typical_hz"] - 200) < 5
+    assert abs(msgs[-1]["spike_hz"] - msgs[-1]["typical_hz"] * 2 ** (9 / 12)) < 0.5
 
 
 def test_voice_calibration_from_speechlike_tone(vosk_model):
@@ -84,3 +88,43 @@ def test_filler_counts_go_up_before_the_sentence_ends(vosk_model, tmp_path):
     assert msgs[-1]["fillers"]["like"] == 2 and msgs[-1]["total"] == 2
     final = a.finish()[0]
     assert final["fillers"]["like"] == 2                                       # not double-counted at the end
+
+
+def voice_rules(**changes):
+    base = {r: {"enabled": True, "threshold": th, "duration": d, "cooldown": 3}
+            for r, th, d in (("volume", 8, 0.3), ("pitch", 9, 0.2), ("quiet", 15, 3))}
+    base["filler"] = {"enabled": True, "threshold": None, "duration": 0, "cooldown": 0}
+    for rule_id, change in changes.items():
+        base[rule_id] = {**base[rule_id], **change}
+    return base
+
+
+def test_voice_settings_disable_and_retime_quiet_alert(vosk_model):
+    silence = np.zeros(SR * 4, dtype=np.float32)
+    board = AlertBoard()
+    a = AudioAnalyzer(vosk_model, None, board)
+    a.apply_settings(voice_rules(quiet={"enabled": False}))
+    feed_all(a, silence)
+    assert "Speak up" not in board.active()
+
+    board = AlertBoard()
+    a = AudioAnalyzer(vosk_model, None, board)
+    a.apply_settings(voice_rules(quiet={"duration": 10}))       # longer than the 4 s of silence
+    feed_all(a, silence)
+    assert "Speak up" not in board.active()
+
+
+def test_voice_threshold_and_settings_survive_new_session(vosk_model):
+    a = AudioAnalyzer(vosk_model, None, AlertBoard())
+    a.apply_settings(voice_rules(pitch={"threshold": 4}, volume={"threshold": 12}))
+    a.reset()                                                    # new practice session
+    assert a.voice.pitch_jump_semitones == 4 and a.voice.volume_jump_db == 12
+
+
+def test_filler_alert_follows_rule_but_still_counts(vosk_model, tmp_path):
+    speech = say("I like this and I like that", tmp_path)
+    board = AlertBoard()
+    a = AudioAnalyzer(vosk_model, None, board)
+    a.apply_settings(voice_rules(filler={"enabled": False}))
+    msgs = feed_all(a, speech) + a.finish()
+    assert msgs[-1]["fillers"]["like"] == 2 and not any(x.startswith("Filler") for x in board.active())

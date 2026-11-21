@@ -1,22 +1,38 @@
-import { useEffect, useState } from 'react'
-import { rules, styles, type Preferences, type Rule, type RuleSettings } from './ruleDefinitions'
+import { useSyncExternalStore } from 'react'
+import {
+  rules,
+  styles,
+  ruleInfo,
+  type Preferences,
+  type Rule,
+  type RuleSettings
+} from './ruleDefinitions'
 
-const storageKey = 'presentation-helper:live-alerts:v1'
+// v2: the rule list now matches the alerts the practice session shows (v1 had 4 voice/posture rules)
+const storageKey = 'presentation-helper:live-alerts:v2'
 
 function defaults(): Preferences {
   return {
     style: 'banner',
-    rules: {
-      volume: defaultRule(rules[0]),
-      pitch: defaultRule(rules[1]),
-      quiet: defaultRule(rules[2]),
-      posture: defaultRule(rules[3])
-    }
+    rules: Object.fromEntries(
+      rules.map((rule) => [rule.id, defaultRule(rule)])
+    ) as Preferences['rules']
   }
 }
 
 function defaultRule(rule: Rule): RuleSettings {
-  return { enabled: true, threshold: rule.value, duration: rule.duration, cooldown: rule.cooldown }
+  return {
+    enabled: true,
+    threshold: ruleInfo(rule).value ?? null,
+    duration: rule.duration,
+    cooldown: rule.cooldown
+  }
+}
+
+function validThreshold(rule: Rule, threshold: unknown): boolean {
+  const { min, max } = ruleInfo(rule)
+  if (min === undefined || max === undefined) return threshold === null
+  return typeof threshold === 'number' && threshold >= min && threshold <= max
 }
 
 function readPreferences(): Preferences {
@@ -30,9 +46,8 @@ function readPreferences(): Preferences {
         if (
           entry &&
           typeof entry.enabled === 'boolean' &&
-          entry.threshold >= rule.min &&
-          entry.threshold <= rule.max &&
-          entry.duration >= 0.1 &&
+          validThreshold(rule, entry.threshold) &&
+          entry.duration >= 0 &&
           entry.duration <= 15 &&
           entry.cooldown >= 0 &&
           entry.cooldown <= 120
@@ -47,16 +62,27 @@ function readPreferences(): Preferences {
   return preferences
 }
 
-export function useAlertPreferences() {
-  const [preferences, setPreferences] = useState(readPreferences)
+// One shared copy for the whole app, so a change on the Live alerts tab reaches the practice
+// session (which stays mounted in the background) straight away.
+let current = readPreferences()
+const listeners = new Set<() => void>()
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(preferences))
-    } catch {
-      // Settings still work for the current window.
-    }
-  }, [preferences])
+function setPreferences(update: Preferences | ((current: Preferences) => Preferences)): void {
+  current = typeof update === 'function' ? update(current) : update
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(current))
+  } catch {
+    // Settings still work for the current window.
+  }
+  listeners.forEach((listener) => listener())
+}
 
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+export function useAlertPreferences(): readonly [Preferences, typeof setPreferences] {
+  const preferences = useSyncExternalStore(subscribe, () => current)
   return [preferences, setPreferences] as const
 }

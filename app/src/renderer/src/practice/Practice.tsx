@@ -1,7 +1,7 @@
-import CameraPreview from './CameraPreview'
-import MicrophoneMeter from './MicrophoneMeter'
-import SessionControls from './SessionControls'
-import TranscriptPanel from './TranscriptPanel'
+import CameraPreview from './components/CameraPreview'
+import MicrophoneMeter from './components/MicrophoneMeter'
+import SessionControls from './components/SessionControls'
+import TranscriptPanel from './components/TranscriptPanel'
 import { usePracticeSession } from './usePracticeSession'
 
 export default function Practice(): React.JSX.Element {

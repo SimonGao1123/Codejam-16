@@ -86,6 +86,7 @@ class VoiceMonitor:
         self.pitch_history = deque(maxlen=BASELINE_HISTORY_BLOCKS)
         self.latest_pitch_hz = None
         self.latest_volume_dbfs = None
+        self.typical_pitch_hz = None          # calibrated pitch, or the running median before that
         self.calibrated_baseline = None
         self.quiet = AlertRule(quiet_seconds)
         self.volume_spike = AlertRule(0.3)
@@ -103,6 +104,7 @@ class VoiceMonitor:
     def calibrate(self, voiced_readings):
         pitches, volumes = zip(*voiced_readings)
         self.calibrated_baseline = median(pitches), median(volumes)
+        self.typical_pitch_hz = self.calibrated_baseline[0]
         self.reset_pending_alerts()
         return self.calibrated_baseline
 
@@ -118,6 +120,7 @@ class VoiceMonitor:
                              if len(self.pitch_history) >= BASELINE_MIN_BLOCKS else None)
         else:
             typical_pitch, typical_volume = self.calibrated_baseline
+        self.typical_pitch_hz = typical_pitch
         # Before calibration the fixed level is a floor; after it, quiet is relative to the speaker.
         if self.calibrated_baseline is not None:
             quiet_threshold = max(self.noise_floor_dbfs, typical_volume - self.quiet_drop_db)

@@ -5,7 +5,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import type { WebcamHandle, WebcamStatus } from './WebcamView'
-import { WebcamRecorder } from './webcamRecorder'
+import { WebcamRecorder } from '../camera/webcamRecorder'
 
 type Props = {
   webcam: React.RefObject<WebcamHandle | null>

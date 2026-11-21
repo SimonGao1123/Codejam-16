@@ -6,7 +6,7 @@ filler-word detection, then sends back voice readings and transcript updates.
 
 - Transport: WebSocket at **`ws://127.0.0.1:<port>/audio`**, on the same service and port as the
   webcam analysis (`/webcam`, see `webcam-protocol.md`).
-- TypeScript types: `app/src/renderer/src/practice/audioProtocol.ts`. Python:
+- TypeScript types: `app/src/renderer/src/practice/audio/audioProtocol.ts`. Python:
   `service/presentation_service/audio_analysis.py`. Keep all three in sync.
 - Electron reconnects every second if the service isn't running, and drops audio rather than
   queueing it if the service falls behind.
@@ -31,11 +31,16 @@ button) also starts voice calibration. Speak normally for 3 s (10 s timeout).
 ### `voice`: every 100 ms
 
 ```json
-{"type": "voice", "pitch_hz": 182.4, "volume_dbfs": -31.2,
+{"type": "voice", "pitch_hz": 182.4, "pitches": [179.8, 182.4], "volume_dbfs": -31.2,
+ "typical_hz": 168.0, "spike_hz": 282.5,
  "calibrated": false, "calibrating": false, "message": ""}
 ```
 
-`pitch_hz` is `null` when the audio isn't voiced (silence, breath). `message` is the calibration
+`pitch_hz` is the latest reading, `null` when the audio isn't voiced (silence, breath, s/t/k
+sounds). `pitches` holds every 50 ms reading since the last message, oldest first; the Voice pitch
+graph plots these. `typical_hz` is the calibrated pitch, or the running typical pitch before
+calibration (`null` for the first second of speech). `spike_hz` is where a pitch-spike alert fires
+(`typical_hz` raised by the Live alerts pitch threshold, in semitones). `message` is the calibration
 status, such as "Voice: keep talking normally (1.5 / 3 s)" or "Voice calibrated: 180 Hz, -30 dBFS".
 
 ### `transcript`: whenever the transcript changes
@@ -62,6 +67,11 @@ Filler markers inside sentences: `[um]` / `[uh]` = detected and confirmed by Whi
 sounded like a filler but Whisper wasn't available to confirm (counted as `filler?`).
 
 ## Alerts on the webcam overlay
+
+The Live alerts tab's `volume`, `pitch`, `quiet` and `filler` rules (sent in the webcam side's
+`settings` message) control these: on/off, threshold (dB above / semitones above / dB below
+normal), minimum duration and cooldown. Fillers are always counted in the transcript; the rule
+only controls the pop-up.
 
 The audio side posts alerts that the webcam side adds to its `alerts` banners for 2.5 s:
 `Speak up` (too quiet or paused too long), `Steady your volume`, `Steady your pitch`, and

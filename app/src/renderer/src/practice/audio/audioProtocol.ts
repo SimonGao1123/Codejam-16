@@ -23,7 +23,10 @@ export type FillerWord = (typeof FILLER_WORDS)[number] // 'filler?' = sounded li
 export interface VoiceMessage {
   type: 'voice' // every 100 ms
   pitch_hz: number | null // null when not voiced (silence, breath)
+  pitches: (number | null)[] // every 50 ms reading since the last message, oldest first
   volume_dbfs: number
+  typical_hz: number | null // calibrated pitch, or the running typical pitch before calibrating
+  spike_hz: number | null // a "Steady your pitch" alert fires above this
   calibrated: boolean
   calibrating: boolean
   message: string // calibration status, e.g. "Voice calibrated: 180 Hz, -30 dBFS"

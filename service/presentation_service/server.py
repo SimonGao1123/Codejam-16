@@ -56,6 +56,13 @@ class Session:
         # audio work (Vosk, Whisper) runs on one worker thread, in order, off the event loop
         self.audio_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="audio")
 
+    def apply_settings(self, rules):
+        """Live alerts settings from the app: {rule id: {enabled, threshold, duration, cooldown}}."""
+        self.webcam.apply_settings(rules)
+        self.audio.apply_settings(rules)
+        log.info("alert settings updated (%d rules, %d off)", len(rules),
+                 sum(not r.get("enabled", True) for r in rules.values()))
+
 
 async def webcam_connection(ws, session):
     log.info("webcam client connected")
@@ -72,6 +79,8 @@ async def webcam_connection(ws, session):
         elif msg["type"] == "calibrate":
             session.webcam.calibrate(msg.get("t"))
             session.audio.request_calibration()
+        elif msg["type"] == "settings":
+            session.apply_settings(msg["rules"])
     log.info("webcam client disconnected")
 
 

@@ -1,13 +1,19 @@
 // WebSocket client for the Python analysis service. Reconnects on its own, and drops frames
 // instead of queueing them when Python falls behind, so the overlay never lags further and further.
 
-import { webcamAnalysisUrl, type ClientMessage, type StateMessage } from './webcamProtocol'
+import {
+  webcamAnalysisUrl,
+  type ClientMessage,
+  type SettingsMessage,
+  type StateMessage
+} from './webcamProtocol'
 
 const RECONNECT_MS = 1000
 const MAX_BUFFERED_BYTES = 256 * 1024 // ~10 frames; beyond this, skip sending until Python catches up
 
 export class WebcamAnalysisClient {
   latest: StateMessage | null = null
+  private settings: SettingsMessage | null = null
   private ws: WebSocket | null = null
   private closed = false
   private retry: ReturnType<typeof setTimeout> | null = null
@@ -29,6 +35,12 @@ export class WebcamAnalysisClient {
     return true
   }
 
+  /** Sends the alert settings now if connected, and again after every reconnect. */
+  setSettings(msg: SettingsMessage): void {
+    this.settings = msg
+    this.send(msg)
+  }
+
   close(): void {
     this.closed = true
     if (this.retry) clearTimeout(this.retry)
@@ -38,6 +50,9 @@ export class WebcamAnalysisClient {
   private connect(): void {
     const ws = new WebSocket(this.url)
     this.ws = ws
+    ws.onopen = () => {
+      if (this.settings) this.send(this.settings) // a restarted service starts with defaults
+    }
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data)

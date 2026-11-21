@@ -1,6 +1,7 @@
 // Canvas drawing over the webcam, ported from webcam_test.py. The canvas is sized to the video's
 // pixel size, so the pixel sizes below match the Python version on the same camera.
 
+import type { Style } from '../../liveAlert/ruleDefinitions'
 import type { FrameMessage, OverlayColor, StateMessage } from './webcamProtocol'
 
 export const POSE_CONNECTIONS: [number, number][] = [
@@ -75,11 +76,13 @@ export function drawLandmarks(ctx: CanvasRenderingContext2D, frame: FrameMessage
   for (const hand of frame.hands) skeleton(ctx, hand.landmarks, HAND_CONNECTIONS, COLORS.yellow)
 }
 
-/** Everything Python computed: rest circles, hand labels, status lines, alert banners, countdown. */
+/** Everything Python computed: rest circles, hand labels, status lines, alerts, countdown.
+ *  Alerts are drawn in the style chosen on the Live alerts tab. */
 export function drawOverlay(
   ctx: CanvasRenderingContext2D,
   state: StateMessage | null,
-  local: { fps: number; handsSeen: number; connected: boolean }
+  local: { fps: number; handsSeen: number; connected: boolean },
+  alertStyle: Style
 ): void {
   const { width: w, height: h } = ctx.canvas
   let y = 28
@@ -93,14 +96,7 @@ export function drawOverlay(
   )
 
   if (!local.connected || !state) {
-    outlined(
-      ctx,
-      'analysis service not connected (start the Python service)',
-      12,
-      y + 26,
-      COLORS.yellow,
-      18
-    )
+    outlined(ctx, 'analysis service not connected yet (starting...)', 12, y + 26, COLORS.yellow, 18)
     return
   }
 
@@ -125,21 +121,63 @@ export function drawOverlay(
     outlined(ctx, cal.message, 12, y + 26, cal.calibrated ? COLORS.green : COLORS.yellow, 18)
 
   const top = Math.max(150, y + 26 + 70) // below the status lines and calibration message
-  state.alerts.forEach((text, i) => banner(ctx, top, i, text))
+  if (alertStyle === 'banner') state.alerts.forEach((text, i) => banner(ctx, top, i, text))
+  if (alertStyle === 'compact') state.alerts.forEach((text, i) => pill(ctx, i, text))
+  // 'silent': no alerts on screen
   if (cal.phase === 'waiting') countdown(ctx, Math.ceil(cal.remaining))
 }
 
-/** Big red alert box, centered, starting at `top`; i stacks multiple alerts. */
+// Alert look, matching the Live alerts preview (.la-cue in liveAlerts.css)
+const CUE = { fill: '#f6d58e', border: '#ecc981', text: '#33250d' }
+const CUE_FONT = '-apple-system, "Segoe UI", sans-serif'
+
+function cueBox(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+): void {
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, h, r)
+  ctx.fillStyle = CUE.fill
+  ctx.fill()
+  ctx.lineWidth = 2
+  ctx.strokeStyle = CUE.border
+  ctx.stroke()
+}
+
+/** Banner: a wide box across the video with the cue centered; i stacks multiple alerts. */
 function banner(ctx: CanvasRenderingContext2D, top: number, i: number, text: string): void {
   const px = 34
-  ctx.font = `bold ${px}px -apple-system, "Segoe UI", sans-serif`
+  const margin = 40
+  const boxH = px + 28
+  const y = top + i * (boxH + 12)
+  cueBox(ctx, margin, y, ctx.canvas.width - 2 * margin, boxH, 12)
+  ctx.font = `600 ${px}px ${CUE_FONT}`
+  ctx.fillStyle = CUE.text
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, ctx.canvas.width / 2, y + boxH / 2)
+  ctx.textAlign = 'start'
+  ctx.textBaseline = 'alphabetic'
+}
+
+/** Compact: a small pill at the top-right edge of the video; i stacks multiple alerts. */
+function pill(ctx: CanvasRenderingContext2D, i: number, text: string): void {
+  const px = 22
+  const padX = 18
+  const boxH = px + 18
+  ctx.font = `600 ${px}px ${CUE_FONT}`
   const tw = ctx.measureText(text).width
-  const x = (ctx.canvas.width - tw) / 2
-  const y = top + i * (px + 30)
-  ctx.fillStyle = COLORS.red
-  ctx.fillRect(x - 16, y - px - 6, tw + 32, px + 20)
-  ctx.fillStyle = COLORS.white
-  ctx.fillText(text, x, y)
+  const x = ctx.canvas.width - 24 - (tw + 2 * padX)
+  const y = 24 + i * (boxH + 10)
+  cueBox(ctx, x, y, tw + 2 * padX, boxH, boxH / 2)
+  ctx.fillStyle = CUE.text
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, x + padX, y + boxH / 2)
+  ctx.textBaseline = 'alphabetic'
 }
 
 /** Large countdown number in the middle of the frame, readable from a few steps back. */
