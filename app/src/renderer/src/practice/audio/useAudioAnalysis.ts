@@ -11,6 +11,8 @@ import { captureMic } from './audioCapture'
 import {
   FILLER_WORDS,
   type FillerWord,
+  type PaceSource,
+  type PaceTargetMessage,
   type SessionScoreMessage,
   type ScriptPositionMessage,
   type TranscriptMessage,
@@ -22,6 +24,7 @@ const FLASH_MS = 1500 // how long a filler chip stays highlighted after it's cou
 const SCRIPT_DEBOUNCE_MS = 500 // send the script once typing pauses, not on every keystroke
 const NOISE_BLOCK = 800 // 50 ms at 16 kHz, the service's voice block
 const MIN_NOISE_BLOCKS = 10 // need at least 0.5 s of the countdown to trust the room level
+const MAX_NOISE_BLOCKS = 60 // the 3 s countdown; waiting for calibration after it doesn't count
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b)
@@ -46,12 +49,18 @@ export interface AudioAnalysis {
   scriptChunks: string[] // the script as Python split it ([] = no script)
   scriptReady: boolean // comparison model loaded
   scriptPosition: ScriptPositionMessage | null
+  avgWpm: number | null // last 3 finished lines, pauses included (null until there are 3)
+  desiredWpm: number | null // the pace to aim for, from Python
+  desiredSource: PaceSource | null
+  paceTarget: PaceTargetMessage | null // latest reply to the script / time the user has
 }
 
-/** `script`: the user's script text; empty = no script (comparison off). */
+/** `script`: the user's script text; empty = no script (comparison off).
+ *  `targetMinutes`: the time the user has to present; null = not set. */
 export function useAudioAnalysis(
   micStream: MediaStream | null,
   script: string,
+  targetMinutes: number | null,
   startedAt: number | null,
   onScore: (score: SessionScoreMessage | null) => void
 ): AudioAnalysis {
@@ -74,6 +83,12 @@ export function useAudioAnalysis(
   const [scriptChunks, setScriptChunks] = useState<string[]>([])
   const [scriptReady, setScriptReady] = useState(false)
   const [scriptPosition, setScriptPosition] = useState<ScriptPositionMessage | null>(null)
+  const [avgWpm, setAvgWpm] = useState<number | null>(null)
+  const [desiredWpm, setDesiredWpm] = useState<number | null>(null)
+  const [desiredSource, setDesiredSource] = useState<PaceSource | null>(null)
+  const [paceTarget, setPaceTarget] = useState<PaceTargetMessage | null>(null)
+  const targetSeconds = targetMinutes && targetMinutes > 0 ? targetMinutes * 60 : null
+  const targetSecondsRef = useRef(targetSeconds)
   const scriptRef = useRef(script.trim() || null) // last script sent to Python
   const latestScriptRef = useRef(script.trim() || null) // latest typed, maybe not sent yet
 
@@ -81,6 +96,7 @@ export function useAudioAnalysis(
     const client = new AudioAnalysisClient()
     clientRef.current = client
     client.setScript(scriptRef.current) // stored now, sent as soon as the socket opens
+    client.setTargetTime(targetSecondsRef.current)
     client.onConnectionChange = (online) => {
       if (!online) pendingScores.current = []
       setConnected(online)
@@ -111,6 +127,10 @@ export function useAudioAnalysis(
         setScriptPosition(null)
       } else if (msg.type === 'script_position') {
         setScriptPosition(msg)
+      } else if (msg.type === 'pace_target') {
+        setPaceTarget(msg)
+        setDesiredWpm(msg.desired_wpm)
+        setDesiredSource(msg.source)
       } else if (
         msg.type === 'session_score' &&
         pendingScores.current.shift() === sessionNumber.current
@@ -124,6 +144,9 @@ export function useAudioAnalysis(
       setFillers(msg.fillers)
       setTotal(msg.total)
       setWpm(msg.wpm ?? null) // a missing value means no reading, not a crash
+      setAvgWpm(msg.avg_wpm ?? null)
+      if (msg.desired_wpm !== undefined) setDesiredWpm(msg.desired_wpm)
+      if (msg.desired_source !== undefined) setDesiredSource(msg.desired_source)
       if (msg.new_fillers.length) {
         const now = Date.now()
         setFlash((f) => ({ ...f, ...Object.fromEntries(msg.new_fillers.map((w) => [w, now])) }))
@@ -151,6 +174,13 @@ export function useAudioAnalysis(
     return () => window.clearTimeout(timer)
   }, [script])
 
+  // the time the user has: tiny message, sent on every change (and again after a reconnect)
+  useEffect(() => {
+    if (targetSeconds === targetSecondsRef.current) return
+    targetSecondsRef.current = targetSeconds
+    clientRef.current?.setTargetTime(targetSeconds)
+  }, [targetSeconds])
+
   // Send session controls even when practicing with only a camera.
   useEffect(() => {
     const client = clientRef.current
@@ -164,6 +194,7 @@ export function useAudioAnalysis(
     setTotal(0)
     setWpm(null)
     setWpmUpdatedAt(null)
+    setAvgWpm(null)
     setVoice(null)
     setScriptPosition(null)
     pitchRef.current = []
@@ -209,6 +240,7 @@ export function useAudioAnalysis(
     let capture: { stop(): void } | null = null
     let pending = new Float32Array(0)
     captureMic(micStream, (samples) => {
+      if (noiseLevels.current.length >= MAX_NOISE_BLOCKS) return
       const joined = new Float32Array(pending.length + samples.length)
       joined.set(pending)
       joined.set(samples, pending.length)
@@ -252,6 +284,10 @@ export function useAudioAnalysis(
     wpmSamples: wpmRef,
     scriptChunks,
     scriptReady,
-    scriptPosition
+    scriptPosition,
+    avgWpm,
+    desiredWpm,
+    desiredSource,
+    paceTarget
   }
 }

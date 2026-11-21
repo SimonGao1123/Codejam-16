@@ -15,6 +15,7 @@ export type AudioControlMessage =
   | { type: 'session_start'; started_at: number } // renderer monotonic seconds at recording start
   | { type: 'session_end' } // practice ended: Python sends the final transcript and score
   | ScriptControlMessage
+  | TargetTimeMessage
   // the room's noise level, measured while the user stood still during the get-ready countdown;
   // Python counts audio up to ~10 dB above it as "not speaking". Sent just before session_start.
   | { type: 'noise_floor'; dbfs: number }
@@ -24,6 +25,13 @@ export type AudioControlMessage =
 export interface ScriptControlMessage {
   type: 'script'
   text: string | null
+}
+
+/** The time the user has to present; null = not set. With a script, Python sets the desired pace
+ *  to script words / this time (otherwise the Live alerts Target pace). Kept across sessions. */
+export interface TargetTimeMessage {
+  type: 'target_time'
+  seconds: number | null
 }
 
 // ---- Python -> Electron
@@ -52,6 +60,20 @@ export interface TranscriptMessage {
   fillers: Record<FillerWord, number> // running totals for the session
   total: number
   wpm: number | null // recent rate, including the provisional words of the line being spoken
+  avg_wpm?: number | null // last 3 finished lines (each ends at a pause), pauses included
+  desired_wpm?: number // the pace to aim for (see PaceTargetMessage)
+  desired_source?: PaceSource
+}
+
+/** script = script words / the time the user has; setting = the Live alerts Target pace slider */
+export type PaceSource = 'script' | 'setting'
+
+export interface PaceTargetMessage {
+  type: 'pace_target' // reply to `target_time` and `script`
+  desired_wpm: number
+  source: PaceSource
+  script_words: number
+  target_seconds: number | null
 }
 
 export interface ScriptLoadedMessage {
@@ -113,4 +135,5 @@ export type AudioServerMessage =
   | TranscriptMessage
   | ScriptLoadedMessage
   | ScriptPositionMessage
+  | PaceTargetMessage
   | SessionScoreMessage

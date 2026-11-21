@@ -29,12 +29,22 @@ interface Props {
   stream: MediaStream | null
   wpm: number | null
   wpmUpdatedAt: number | null
+  avgWpm: number | null // last 3 finished lines
+  desiredWpm: number | null // the pace to aim for
   onStatus: (s: WebcamStatus) => void
 }
 
 const STATUS_MS = 100
 
-export default function WebcamView({ ref, stream, wpm, wpmUpdatedAt, onStatus }: Props): React.JSX.Element {
+export default function WebcamView({
+  ref,
+  stream,
+  wpm,
+  wpmUpdatedAt,
+  avgWpm,
+  desiredWpm,
+  onStatus
+}: Props): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const clientRef = useRef<WebcamAnalysisClient | null>(null)
@@ -45,6 +55,7 @@ export default function WebcamView({ ref, stream, wpm, wpmUpdatedAt, onStatus }:
   const lastTRef = useRef(0) // MediaPipe needs strictly increasing timestamps, across sessions too
   const wpmRef = useRef(wpm)
   const wpmUpdatedAtRef = useRef(wpmUpdatedAt)
+  const paceRef = useRef({ avgWpm, desiredWpm })
   // Live alerts tab settings: rules go to Python, the style decides how alerts are drawn
   const [preferences] = useAlertPreferences()
   const preferencesRef = useRef(preferences)
@@ -55,6 +66,9 @@ export default function WebcamView({ ref, stream, wpm, wpmUpdatedAt, onStatus }:
   useEffect(() => {
     wpmUpdatedAtRef.current = wpmUpdatedAt
   }, [wpmUpdatedAt])
+  useEffect(() => {
+    paceRef.current = { avgWpm, desiredWpm }
+  }, [avgWpm, desiredWpm])
 
   useImperativeHandle(
     ref,
@@ -163,7 +177,8 @@ export default function WebcamView({ ref, stream, wpm, wpmUpdatedAt, onStatus }:
           handsSeen: frame.hands.length,
           connected: client.connected,
           wpm: wpmRef.current,
-          wpmUpdatedAt: wpmUpdatedAtRef.current
+          wpmUpdatedAt: wpmUpdatedAtRef.current,
+          ...paceRef.current
         },
         preferencesRef.current.style
       )

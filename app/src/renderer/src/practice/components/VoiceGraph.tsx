@@ -13,6 +13,7 @@ type Props = {
   typicalHz?: number | null
   spikeHz?: number | null
   silenceDbfs?: number | null // volume graph: below this the speaker counts as not speaking
+  desiredWpm?: number | null // pace graph: the pace to aim for
   live: boolean // false: freeze on the last reading (session ended)
 }
 
@@ -39,14 +40,15 @@ export default function VoiceGraph({
   typicalHz = null,
   spikeHz = null,
   silenceDbfs = null,
+  desiredWpm = null,
   live
 }: Props): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const linesRef = useRef({ typicalHz, spikeHz, silenceDbfs, live })
+  const linesRef = useRef({ typicalHz, spikeHz, silenceDbfs, desiredWpm, live })
 
   useEffect(() => {
-    linesRef.current = { typicalHz, spikeHz, silenceDbfs, live }
-  }, [typicalHz, spikeHz, silenceDbfs, live])
+    linesRef.current = { typicalHz, spikeHz, silenceDbfs, desiredWpm, live }
+  }, [typicalHz, spikeHz, silenceDbfs, desiredWpm, live])
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -88,6 +90,7 @@ function render(
     typicalHz: number | null
     spikeHz: number | null
     silenceDbfs: number | null
+    desiredWpm: number | null
     live: boolean
   },
   metric: Props['metric']
@@ -169,6 +172,8 @@ function render(
       COLORS.typical,
       `Typical ${lines.typicalHz.toFixed(0)} Hz (last 10 s of speech)`
     )
+  if (lines.desiredWpm)
+    dashed(lines.desiredWpm, COLORS.typical, `Desired ${lines.desiredWpm.toFixed(0)} WPM`)
 
   // Break the trace when readings are missing.
   ctx.save()

@@ -267,14 +267,6 @@
 .ph-error {
   color: #f6d58e;
 }
-.ph-notice {
-  margin: 0;
-  padding: 12px 16px;
-  border-radius: 10px;
-  color: #33250d;
-  background: #f6d58e;
-  font-weight: 600;
-}
 .ph-app .ph-session-action {
   width: 100%;
   border: 0;
@@ -371,6 +363,32 @@
   align-items: center;
   gap: 8px 10px;
   padding-top: 10px;
+}
+.ph-script-pace {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid #38334e;
+  color: #c4bfda;
+  font-size: 14px;
+}
+.ph-script-pace label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+  color: #ece9f7;
+}
+.ph-script-pace input {
+  width: 72px;
+  padding: 6px 8px;
+  border: 1px solid #4a4466;
+  border-radius: 8px;
+  color: #ece9f7;
+  background: #1a1b27;
+  font: inherit;
 }
 .ph-script-parts + .ph-script-bar {
   padding: 10px 16px 14px;

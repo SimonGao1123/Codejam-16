@@ -62,9 +62,19 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
       <section className="ph-pitch" aria-labelledby="ph-wpm-heading">
         <div className="ph-card-head">
           <h2 id="ph-wpm-heading">Speaking pace</h2>
-          <span>{speech.wpm == null ? 'Not speaking' : `${speech.wpm.toFixed(0)} WPM`}</span>
+          <span>
+            {speech.wpm == null ? 'Not speaking' : `${speech.wpm.toFixed(0)} WPM`}
+            {' · avg '}
+            {speech.avgWpm == null ? '--' : speech.avgWpm.toFixed(0)}
+            {speech.desiredWpm != null && ` · desired ${speech.desiredWpm.toFixed(0)}`}
+          </span>
         </div>
-        <VoiceGraph metric="wpm" samples={speech.wpmSamples} live={listening} />
+        <VoiceGraph
+          metric="wpm"
+          samples={speech.wpmSamples}
+          desiredWpm={speech.desiredWpm}
+          live={listening}
+        />
       </section>
       <section className="ph-transcript" aria-labelledby="ph-transcript-heading">
         <div className="ph-card-head">

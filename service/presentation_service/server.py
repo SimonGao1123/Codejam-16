@@ -133,8 +133,10 @@ async def audio_connection(ws, session):
                         voice_incidents=session.audio.voice_incidents,
                         body_incidents=body_incidents,
                         pace=session.audio.pace_summary(),
-                        pace_target_wpm=session.audio.pace_target_wpm(),
+                        pace_target_wpm=session.audio.desired_wpm(),
                         duration_seconds=duration_seconds,
+                        expected_minutes=(session.audio.target_seconds / 60
+                                          if session.audio.target_seconds else None),
                         volume=session.audio.volume_summary(),
                         script_match=session.audio.script_match()
                     )
@@ -159,14 +161,15 @@ async def audio_connection(ws, session):
                 for out in results:
                     await ws.send(json.dumps(out))
                     
-            elif msg["type"] == "calibrate":
-                session.audio.request_calibration()
             elif msg["type"] == "noise_floor":
                 await run(session.audio.set_noise_floor, msg.get("dbfs"))
                 log.info("room noise %.1f dBFS: not speaking below %.1f dBFS", msg["dbfs"],
                          session.audio.voice.silence_dbfs)
             elif msg["type"] == "script":
                 await ws.send(json.dumps(await run(session.audio.set_script, msg.get("text"))))
+                await ws.send(json.dumps(await run(session.audio.pace_target_message)))   # word count changed
+            elif msg["type"] == "target_time":
+                await ws.send(json.dumps(await run(session.audio.set_target_time, msg.get("seconds"))))
     finally:
         if session.scoring_client is ws:
             session.scoring_client = None

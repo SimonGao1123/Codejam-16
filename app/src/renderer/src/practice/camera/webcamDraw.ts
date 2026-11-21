@@ -87,6 +87,8 @@ export function drawOverlay(
     connected: boolean
     wpm: number | null
     wpmUpdatedAt: number | null
+    avgWpm: number | null // last 3 finished lines
+    desiredWpm: number | null // the pace to aim for
   },
   alertStyle: Style
 ): void {
@@ -98,7 +100,8 @@ export function drawOverlay(
       : null
   outlined(
     ctx,
-    `FPS ${local.fps.toFixed(0)}   hands seen: ${local.handsSeen}   WPM: ${freshWpm?.toFixed(0) ?? '--'}`,
+    `FPS ${local.fps.toFixed(0)}   hands seen: ${local.handsSeen}   WPM: ${freshWpm?.toFixed(0) ?? '--'}` +
+      `   avg: ${local.avgWpm?.toFixed(0) ?? '--'} / ${local.desiredWpm?.toFixed(0) ?? '--'} desired`,
     12,
     y,
     COLORS.white,
