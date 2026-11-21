@@ -13,6 +13,7 @@ const MAX_BUFFERED_BYTES = 512 * 1024 // ~8 s of audio
 export class AudioAnalysisClient {
   onMessage: ((msg: AudioServerMessage) => void) | null = null
   onConnectionChange: ((connected: boolean) => void) | null = null
+  private script: string | null = null
   private ws: WebSocket | null = null
   private closed = false
   private retry: ReturnType<typeof setTimeout> | null = null
@@ -38,6 +39,12 @@ export class AudioAnalysisClient {
     if (this.connected) this.ws!.send(JSON.stringify(msg))
   }
 
+  /** Sends the script now if connected, and again after every reconnect. */
+  setScript(text: string | null): void {
+    this.script = text
+    this.send({ type: 'script', text })
+  }
+
   close(): void {
     this.closed = true
     if (this.retry) clearTimeout(this.retry)
@@ -48,7 +55,10 @@ export class AudioAnalysisClient {
     const ws = new WebSocket(this.url)
     ws.binaryType = 'arraybuffer'
     this.ws = ws
-    ws.onopen = () => this.onConnectionChange?.(true)
+    ws.onopen = () => {
+      this.send({ type: 'script', text: this.script }) // a restarted service has no script
+      this.onConnectionChange?.(true)
+    }
     ws.onmessage = (e) => {
       try {
         this.onMessage?.(JSON.parse(e.data))

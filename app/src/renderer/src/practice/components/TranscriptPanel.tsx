@@ -1,95 +1,20 @@
-// Running transcript + filler word counter, below the camera preview. While the practice
-// session's microphone is on, its audio streams to the Python service, which sends back the
-// transcript, filler counts and voice readings.
+// Voice pitch graph + running transcript with the filler word counter, below the camera preview.
+// Shows what useAudioAnalysis (audio/useAudioAnalysis.ts) receives from the Python service.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 
-import { AudioAnalysisClient } from '../audio/audioAnalysisClient'
-import { captureMic } from '../audio/audioCapture'
-import PitchGraph, { PITCH_WINDOW_S, type PitchSample } from './PitchGraph'
-import {
-  FILLER_WORDS,
-  type FillerWord,
-  type TranscriptMessage,
-  type VoiceMessage
-} from '../audio/audioProtocol'
+import type { AudioAnalysis } from '../audio/useAudioAnalysis'
+import { FILLER_WORDS } from '../audio/audioProtocol'
+import PitchGraph from './PitchGraph'
 
 type Props = {
-  micStream: MediaStream | null
+  speech: AudioAnalysis
   running: boolean
 }
 
-const NO_FILLERS = Object.fromEntries(FILLER_WORDS.map((w) => [w, 0])) as Record<FillerWord, number>
-const FLASH_MS = 1500 // how long a filler chip stays highlighted after it's counted
-
-export default function TranscriptPanel({ micStream, running }: Props): React.JSX.Element {
-  const clientRef = useRef<AudioAnalysisClient | null>(null)
+export default function TranscriptPanel({ speech, running }: Props): React.JSX.Element {
+  const { connected, listening, sentences, partial, fillers, total, flash, voice } = speech
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [connected, setConnected] = useState(false)
-  const [sentences, setSentences] = useState<string[]>([])
-  const [partial, setPartial] = useState('')
-  const [fillers, setFillers] = useState(NO_FILLERS)
-  const [total, setTotal] = useState(0)
-  const [flash, setFlash] = useState<Partial<Record<FillerWord, number>>>({})
-  const [voice, setVoice] = useState<VoiceMessage | null>(null)
-  const pitchRef = useRef<PitchSample[]>([]) // last PITCH_WINDOW_S of readings, for the graph
-
-  // connection to the Python service: for as long as the practice page is open
-  useEffect(() => {
-    const client = new AudioAnalysisClient()
-    clientRef.current = client
-    client.onConnectionChange = setConnected
-    client.onMessage = (msg) => {
-      if (msg.type === 'voice') {
-        setVoice(msg)
-        const now = performance.now() / 1000
-        const samples = pitchRef.current
-        // one reading per 50 ms block; the newest is "now"
-        msg.pitches.forEach((hz, i) =>
-          samples.push({ t: now - (msg.pitches.length - 1 - i) * 0.05, hz })
-        )
-        while (samples.length && samples[0].t < now - PITCH_WINDOW_S - 1) samples.shift()
-      } else applyTranscript(msg)
-    }
-    function applyTranscript(msg: TranscriptMessage): void {
-      if (msg.new_sentences.length) setSentences((s) => [...s, ...msg.new_sentences])
-      setPartial(msg.partial)
-      setFillers(msg.fillers)
-      setTotal(msg.total)
-      if (msg.new_fillers.length) {
-        const now = Date.now()
-        setFlash((f) => ({ ...f, ...Object.fromEntries(msg.new_fillers.map((w) => [w, now])) }))
-      }
-    }
-    return () => {
-      client.close()
-      clientRef.current = null
-    }
-  }, [])
-
-  // stream the mic while the session has one; a new session starts a fresh transcript
-  useEffect(() => {
-    const client = clientRef.current
-    if (!micStream || !client) return
-    let stopped = false
-    let capture: { stop(): void } | null = null
-    setSentences([])
-    setPartial('')
-    setFillers(NO_FILLERS)
-    setTotal(0)
-    setVoice(null)
-    pitchRef.current = []
-    client.send({ type: 'session_start' })
-    captureMic(micStream, (samples) => client.sendAudio(samples)).then(
-      (c) => (stopped ? c.stop() : (capture = c)),
-      (err) => console.error('microphone capture failed', err)
-    )
-    return () => {
-      stopped = true
-      capture?.stop()
-      client.send({ type: 'session_end' })
-    }
-  }, [micStream])
 
   // keep the newest words in view
   useEffect(() => {
@@ -97,14 +22,6 @@ export default function TranscriptPanel({ micStream, running }: Props): React.JS
     if (el) el.scrollTop = el.scrollHeight
   }, [sentences, partial])
 
-  // un-highlight filler chips after FLASH_MS
-  useEffect(() => {
-    if (!Object.keys(flash).length) return
-    const timer = window.setTimeout(() => setFlash({}), FLASH_MS)
-    return () => window.clearTimeout(timer)
-  }, [flash])
-
-  const listening = Boolean(micStream) && connected
   const empty = !sentences.length && !partial
 
   return (
@@ -123,7 +40,7 @@ export default function TranscriptPanel({ micStream, running }: Props): React.JS
           </span>
         </div>
         <PitchGraph
-          samples={pitchRef}
+          samples={speech.pitch}
           typicalHz={voice?.typical_hz ?? null}
           spikeHz={voice?.spike_hz ?? null}
           calibrated={voice?.calibrated ?? false}

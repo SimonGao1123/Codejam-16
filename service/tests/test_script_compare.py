@@ -1,0 +1,157 @@
+"""Script comparison in the service: the matching itself (same code as the experiment) and how the
+audio side feeds it the existing transcript."""
+
+import numpy as np
+import pytest
+
+from presentation_service.audio_analysis import AudioAnalyzer
+from presentation_service.script_compare import Embedder, ScriptTracker, chunk_script
+from presentation_service.server import VOSK_MODEL, AlertBoard
+from presentation_service.transcript import load_vosk
+from tests.test_audio import SR, feed_all, say
+
+SCRIPT = """
+Good morning everyone, and thank you for coming to our quarterly review.
+Today I will walk you through our sales results, our hiring plans, and the new product launch.
+First, sales grew by twelve percent compared to last quarter, mostly in the European market.
+Our biggest customer, Northwind, renewed their contract for another three years.
+Second, we plan to hire fifteen new engineers to support the mobile app team.
+Recruiting will focus on senior developers with experience in cloud infrastructure.
+Third, the new product called Atlas launches in March with a public beta for early customers.
+Atlas helps small businesses track inventory automatically using their phone camera.
+To wrap up, the quarter was strong and the team is ready for the next phase.
+Thank you, and I am happy to take any questions now.
+"""
+CHUNKS = chunk_script(SCRIPT)
+
+
+@pytest.fixture(scope="module")
+def embed():
+    return Embedder()
+
+
+@pytest.fixture(scope="module")
+def vosk_model():
+    return load_vosk(VOSK_MODEL)
+
+
+class RecordingBoard(AlertBoard):
+    """Keeps every pop-up posted (the real board expires them after 2.5 s)."""
+
+    def __init__(self):
+        super().__init__()
+        self.posted = []
+
+    def post(self, text):
+        self.posted.append(text)
+        super().post(text)
+
+
+def analyzer(vosk_model, embed, board=None):
+    a = AudioAnalyzer(vosk_model, None, board or AlertBoard())
+    a.set_embedder(embed)
+    return a
+
+
+def feed_realtime(a, samples, chunk=2048, monkeypatch=None):
+    """Like feed_all, but advances the clock the script check uses by the audio's duration."""
+    import presentation_service.audio_analysis as aa
+    clock = [0.0]
+    real = aa.time.monotonic
+    aa.time.monotonic = lambda: clock[0]
+    try:
+        out = []
+        for i in range(0, len(samples), chunk):
+            clock[0] += chunk / SR
+            out += a.feed(samples[i:i + chunk].astype(np.float32))
+        return out
+    finally:
+        aa.time.monotonic = real
+
+
+def test_tracker_same_behaviour_as_experiment(embed):
+    t = ScriptTracker(CHUNKS, embed)
+    clock, said, positions = 0.0, [], []
+    for w in " ".join(CHUNKS).split():
+        said.append(w)
+        if len(said) % 8 == 0:
+            clock += 1.5
+            m = t.update(" ".join(said), now=clock)
+            positions.append(m.position)
+    assert positions[-1] >= len(CHUNKS) - 2 and all(b >= a for a, b in zip(positions, positions[1:]))
+
+
+def test_no_script_means_no_script_messages(vosk_model, embed):
+    a = analyzer(vosk_model, embed)
+    assert a.set_script("") == {"type": "script_loaded", "chunks": [], "ready": False}
+    msgs = feed_all(a, np.zeros(SR, dtype=np.float32))
+    assert not [m for m in msgs if m["type"].startswith("script")]
+
+
+def test_script_loaded_reports_parts(vosk_model, embed):
+    msg = analyzer(vosk_model, embed).set_script(SCRIPT)
+    assert msg["ready"] and len(msg["chunks"]) == 10
+
+
+def test_script_arriving_before_model_starts_once_model_is_ready(vosk_model, embed):
+    a = AudioAnalyzer(vosk_model, None, AlertBoard())
+    assert a.set_script(SCRIPT)["ready"] is False
+    a.set_embedder(embed)
+    msgs = feed_all(a, np.zeros(SR // 2, dtype=np.float32))
+    assert {"type": "script_loaded", "chunks": CHUNKS, "ready": True} in msgs
+
+
+def test_skipping_ahead_in_speech_is_tracked_and_alerted(vosk_model, embed, tmp_path):
+    # reads parts 1-3, then skips to part 7: tracked from the transcript the service already makes
+    speech = say(" ".join(CHUNKS[:3] + CHUNKS[6:9]), tmp_path)
+    board = RecordingBoard()
+    a = analyzer(vosk_model, embed, board)
+    a.set_script(SCRIPT)
+    msgs = feed_realtime(a, np.concatenate([speech, np.zeros(SR, dtype=np.float32)]))
+    msgs += a.finish()
+    positions = [m for m in msgs if m["type"] == "script_position"]
+    assert positions and positions[-1]["position"] >= 7
+    assert {3, 4, 5} <= set(positions[-1]["skipped"])
+    assert any(e.startswith("Jumped ahead to chunk 7") for m in positions for e in m["events"])
+    assert "Skipped ahead" in board.posted
+    assert not any(any(ch.isdigit() for ch in p) for p in board.posted)     # pop-ups never name a part
+
+
+def test_disabled_rule_hides_popup_but_keeps_tracking(vosk_model, embed, tmp_path):
+    speech = say(" ".join(CHUNKS[:3] + CHUNKS[6:9]), tmp_path)
+    board = RecordingBoard()
+    a = analyzer(vosk_model, embed, board)
+    a.set_script(SCRIPT)
+    a.apply_settings({"out_of_order": {"enabled": False, "threshold": None, "duration": 0, "cooldown": 0}})
+    msgs = feed_realtime(a, np.concatenate([speech, np.zeros(SR, dtype=np.float32)])) + a.finish()
+    assert any(m["type"] == "script_position" and m["skipped"] for m in msgs)
+    assert not any(x.startswith("Skipped") for x in board.posted)
+
+
+def test_off_script_slider_and_stuck_factor_reach_the_tracker(vosk_model, embed):
+    a = analyzer(vosk_model, embed)
+    a.set_script(SCRIPT)
+    a.apply_settings({"off_script": {"enabled": True, "threshold": 50, "duration": 10, "cooldown": 0},
+                      "stuck": {"enabled": True, "threshold": 5, "duration": 0, "cooldown": 0}})
+    t = a.script_tracker
+    assert (t.threshold, t.off_topic_s, t.stuck_factor) == (0.5, 10.0, 5.0)
+
+
+def test_new_session_keeps_script_but_starts_from_the_top(vosk_model, embed):
+    a = analyzer(vosk_model, embed)
+    a.set_script(SCRIPT)
+    a.script_tracker.position = 5
+    a.reset()
+    assert a.script_chunks == CHUNKS and a.script_tracker.position == -1
+
+
+def test_tracking_starting_mid_session_does_not_mark_earlier_parts_skipped(vosk_model, embed, tmp_path):
+    # the model "finishes loading" after three parts were already said
+    speech = say(" ".join(CHUNKS[:3]), tmp_path)
+    a = AudioAnalyzer(vosk_model, None, RecordingBoard())
+    a.set_script(SCRIPT)
+    feed_realtime(a, speech)
+    a.set_embedder(embed)
+    msgs = feed_realtime(a, np.zeros(SR, dtype=np.float32)) + a.finish()
+    last = [m for m in msgs if m["type"] == "script_position"][-1]
+    assert last["position"] >= 2 and last["skipped"] == []

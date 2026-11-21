@@ -14,6 +14,14 @@ export const AUDIO_SAMPLE_RATE = 16000 // binary messages: float32 little-endian
 export type AudioControlMessage =
   | { type: 'session_start' } // new practice session: Python clears the transcript and counts
   | { type: 'session_end' } // practice ended: Python finishes the open sentence
+  | ScriptControlMessage
+
+/** The user's script (pasted or read from a PDF); null / empty = no script, comparison off.
+ *  Python compares the transcript with it and keeps it across sessions until it changes. */
+export interface ScriptControlMessage {
+  type: 'script'
+  text: string | null
+}
 
 // ---- Python -> Electron
 
@@ -41,4 +49,21 @@ export interface TranscriptMessage {
   total: number
 }
 
-export type AudioServerMessage = VoiceMessage | TranscriptMessage
+export interface ScriptLoadedMessage {
+  type: 'script_loaded' // reply to `script`, and again once the comparison model has loaded
+  chunks: string[] // the script split into parts ([] = no script)
+  ready: boolean // false while the comparison model is still loading
+}
+
+export interface ScriptPositionMessage {
+  type: 'script_position' // at most every 1.5 s while new words arrive
+  position: number // current part (0-based), -1 = not started
+  best: number // best-matching part for the latest words
+  status: string // on track / jumped ahead / went back / stuck / ad-libbing ... / off topic / checking
+  skipped: number[] // parts skipped so far
+  best_score: number // 0-1, how well the latest words match the best part
+  events: string[] // what just happened, e.g. "Jumped ahead to chunk 7: skipped 4, 5, 6"
+}
+
+export type AudioServerMessage =
+  VoiceMessage | TranscriptMessage | ScriptLoadedMessage | ScriptPositionMessage

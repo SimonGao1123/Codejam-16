@@ -1,5 +1,7 @@
 """Audio analysis: splits the 16 kHz float32 mic stream from Electron into 50 ms blocks for the
 voice monitor (pitch / volume) and 30 ms frames for the transcriber (Vosk + filler detection).
+If the user gave a script, the transcriber's text is then compared with it (script_compare.py):
+no extra audio processing, just the transcript that's already there.
 Message format: docs/audio-protocol.md."""
 
 import threading
@@ -7,12 +9,16 @@ import time
 
 import numpy as np
 
+from .script_compare import ScriptTracker, chunk_script
 from .transcript import FRAME, Transcriber
 from .voice import BLOCK_SIZE, BLOCK_SECONDS, VoiceCalibration, VoiceMonitor
 
 VOICE_EVERY_BLOCKS = 2          # send a voice reading every 100 ms
 VOICE_RULES = {VoiceMonitor.VOLUME_SPIKE: "volume", VoiceMonitor.PITCH_SPIKE: "pitch",
                VoiceMonitor.QUIET: "quiet"}   # alert text -> Live alerts rule id
+SCRIPT_RULES = {"jump": "out_of_order", "back": "out_of_order", "off_topic": "off_script",
+                "stuck": "stuck"}             # script event kind -> Live alerts rule id
+SCRIPT_CHECK_S = 1.5            # compare the transcript with the script at most this often
 
 
 class AudioAnalyzer:
@@ -21,13 +27,95 @@ class AudioAnalyzer:
         self.transcriber = Transcriber(vosk_model, whisper_model)
         self._calibrate_requested = threading.Event()
         self.settings = {}                          # Live alerts rules, see apply_settings()
-        self.last_filler_alert = -float("inf")
+        self.last_alert = {}                        # rule id -> time of its last pop-up (cooldowns)
+        self.embedder = None                        # script comparison model, loaded in the background
+        self.script_chunks = []                     # the user's script, split into parts ([] = no script)
+        self.script_tracker = None
         self.reset()
 
     def apply_settings(self, rules):
-        """Live alerts settings for the voice rules (volume, pitch, quiet) and filler words."""
+        """Live alerts settings for the voice, filler and script rules."""
         self.settings = rules
         self._configure_voice()
+        self._configure_script()
+
+    def _configure_script(self):
+        t = self.script_tracker
+        if not t:
+            return
+        off, stuck = self.settings.get("off_script", {}), self.settings.get("stuck", {})
+        if off.get("threshold") is not None:
+            t.threshold = float(off["threshold"]) / 100        # slider is "% match needed"
+        if off.get("duration") is not None:
+            t.off_topic_s = float(off["duration"])
+        if stuck.get("threshold") is not None:
+            t.stuck_factor = float(stuck["threshold"])
+
+    def post_rule(self, rule_id, text):
+        """Show a pop-up for a Live alerts rule, unless it's turned off or still cooling down."""
+        cooldown = float(self.settings.get(rule_id, {}).get("cooldown", 0))
+        now = time.monotonic()
+        if self.enabled(rule_id) and now - self.last_alert.get(rule_id, -float("inf")) >= cooldown:
+            self.last_alert[rule_id] = now
+            self.alerts.post(text)
+
+    # ---------- script comparison ----------
+    def set_embedder(self, embedder):
+        """Called from the loader thread; the tracker itself is built on the audio thread."""
+        self.embedder = embedder
+
+    def set_script(self, text):
+        """The user's script (None / empty = no script, comparison off) -> script_loaded message."""
+        self.script_chunks = chunk_script(text) if text and text.strip() else []
+        self.script_tracker = None
+        self._build_tracker()
+        return self.script_loaded_message()
+
+    def _build_tracker(self):
+        if self.script_chunks and self.embedder and not self.script_tracker:
+            self.script_tracker = ScriptTracker(self.script_chunks, self.embedder)
+            self._configure_script()
+            self.last_script_text, self.last_script_check = "", -float("inf")
+            return True
+        return False
+
+    def script_loaded_message(self):
+        return {"type": "script_loaded", "chunks": self.script_chunks,
+                "ready": self.script_tracker is not None}
+
+    def check_script(self, force=False):
+        """Compare the transcript so far with the script (at most every SCRIPT_CHECK_S, and only when
+        new words arrived) -> list of messages."""
+        out = []
+        if self._build_tracker():                   # the model finished loading after the script came
+            out.append(self.script_loaded_message())
+        t = self.script_tracker
+        if not t:
+            return out
+        tr = self.transcriber
+        text = " ".join(tr.sentences + [tr.last_partial]).strip()
+        now = time.monotonic()
+        if text == self.last_script_text or (not force and now - self.last_script_check < SCRIPT_CHECK_S):
+            return out
+        first = self.last_script_text == ""
+        self.last_script_text, self.last_script_check = text, now
+        if first and len(text.split()) > 12:
+            t.catch_up(text, now)                   # tracking started after the speaker did
+        m = t.update(text, now)
+        if m is None:
+            return out
+        for e in m.events:
+            self.post_rule(SCRIPT_RULES[e["kind"]], e["cue"])
+        out.append({
+            "type": "script_position",
+            "position": m.position,
+            "best": m.best,
+            "status": m.status,
+            "skipped": sorted(t.skipped),
+            "best_score": round(float(m.score[m.best]), 3),
+            "events": [e["message"] for e in m.events],
+        })
+        return out
 
     def _configure_voice(self):
         v = self.voice
@@ -54,6 +142,9 @@ class AudioAnalyzer:
         self.voice_pos = self.speech_pos = 0        # samples consumed by each side
         self.blocks = 0
         self.recent_pitches = []                    # every 50 ms block's pitch since the last voice message
+        if self.script_tracker:                     # same script, start again from the top
+            self.script_tracker.reset()
+            self.last_script_text, self.last_script_check = "", -float("inf")
 
     def set_whisper(self, model):
         self.transcriber.whisper = model
@@ -93,7 +184,7 @@ class AudioAnalyzer:
             else:
                 for alert in self.voice.process(block, self.blocks * BLOCK_SECONDS):
                     if self.enabled(VOICE_RULES[alert]):
-                        self.alerts.post(alert)
+                        self.alerts.post(alert)     # voice rules have their own cooldowns
             p = self.voice.latest_pitch_hz
             self.recent_pitches.append(round(float(p), 1) if p else None)
             if self.blocks % VOICE_EVERY_BLOCKS == 0:
@@ -116,13 +207,15 @@ class AudioAnalyzer:
 
         if transcript_changed:
             out.append(self.transcript_message(new_sentences, new_fillers))
+        if self.script_chunks:
+            out += self.check_script()
         return out
 
     def finish(self):
         """End of session: close the open phrase so its words make it into the transcript."""
         sentences, fillers = [], []
         self.collect(self.transcriber.flush(), sentences, fillers)
-        return [self.transcript_message(sentences, fillers, partial="")]
+        return [self.transcript_message(sentences, fillers, partial="")] + self.check_script(force=True)
 
     def collect(self, events, sentences, fillers):
         """Sort transcriber events into new sentences / fillers; fillers also become alerts."""
@@ -130,12 +223,8 @@ class AudioAnalyzer:
             if kind == "sentence":
                 sentences.append(value)
             elif kind == "filler":
-                fillers.append(value)               # always counted; the alert follows the rule
-                cooldown = float(self.settings.get("filler", {}).get("cooldown", 0))
-                now = time.monotonic()
-                if self.enabled("filler") and now - self.last_filler_alert >= cooldown:
-                    self.last_filler_alert = now
-                    self.alerts.post(f"Filler: {value}" if value != "filler?" else "Filler?")
+                fillers.append(value)               # always counted; the pop-up follows the rule
+                self.post_rule("filler", f"Filler: {value}" if value != "filler?" else "Filler?")
 
     def voice_message(self):
         v, cal = self.voice, self.voice_calibration

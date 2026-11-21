@@ -1,5 +1,9 @@
+import { useState } from 'react'
+
+import { useAudioAnalysis } from './audio/useAudioAnalysis'
 import CameraPreview from './components/CameraPreview'
 import MicrophoneMeter from './components/MicrophoneMeter'
+import ScriptPanel from './components/ScriptPanel'
 import SessionControls from './components/SessionControls'
 import TranscriptPanel from './components/TranscriptPanel'
 import { usePracticeSession } from './usePracticeSession'
@@ -7,6 +11,8 @@ import { usePracticeSession } from './usePracticeSession'
 export default function Practice(): React.JSX.Element {
   const session = usePracticeSession()
   const { running, finished, camera, microphone, cameraStream, micStream, pending } = session
+  const [script, setScript] = useState('') // optional; empty = no script tracking
+  const speech = useAudioAnalysis(micStream, script)
 
   return (
     <main className="ph-practice">
@@ -42,7 +48,8 @@ export default function Practice(): React.JSX.Element {
           endPractice={session.endPractice}
         />
       </div>
-      <TranscriptPanel micStream={micStream} running={running} />
+      <ScriptPanel script={script} setScript={setScript} running={running} speech={speech} />
+      <TranscriptPanel speech={speech} running={running} />
     </main>
   )
 }

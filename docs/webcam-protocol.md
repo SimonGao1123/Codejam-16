@@ -67,6 +67,7 @@ Sent when the connection opens and whenever a rule changes on the Live alerts ta
 | `fast` | Slow your hands | wrist speed, shoulder widths / s |
 | `repeat` | Vary your gestures | % self-similarity (0.8 score = 80) |
 | `volume`, `pitch`, `quiet`, `filler` | voice / filler alerts (applied by the audio side, see `audio-protocol.md`) | |
+| `off_script`, `out_of_order`, `stuck` | script alerts, only with a script (audio side, see `audio-protocol.md`) | % match needed / — / × expected time |
 
 `duration` = seconds the problem must last before the alert shows; `cooldown` = seconds after an
 alert disappears before it can show again; a disabled rule never shows. Without a `settings`
