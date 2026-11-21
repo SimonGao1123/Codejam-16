@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type { SavedRecording } from '../main/webcamRecorder'
 
 // the Python analysis service's port, passed by the main process (see src/main/analysisService.ts)
 const portArg = process.argv.find((a) => a.startsWith('--analysis-service-port='))
@@ -8,6 +9,7 @@ const portArg = process.argv.find((a) => a.startsWith('--analysis-service-port='
 const api = {
   servicePort: Number(portArg?.split('=')[1]) || 8766,
   webcamRecorder: {
+    list: (): Promise<SavedRecording[]> => ipcRenderer.invoke('webcam-recorder:list'),
     start: (): Promise<{ dir: string; base: string }> =>
       ipcRenderer.invoke('webcam-recorder:start'),
     chunk: (chunk: Uint8Array): void => ipcRenderer.send('webcam-recorder:chunk', chunk),

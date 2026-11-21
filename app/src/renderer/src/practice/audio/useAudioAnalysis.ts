@@ -73,16 +73,15 @@ export function useAudioAnalysis(
     client.onMessage = (msg) => {
       if (msg.type === 'voice') {
         setVoice(msg)
-        const now = performance.now() / 1000
+        const volumeTime = msg.captured_at ?? performance.now() / 1000
         const samples = pitchRef.current
-        // one reading per 50 ms block; the newest is "now"
-        msg.pitches.forEach((value, i) =>
-          samples.push({ t: now - (msg.pitches.length - 1 - i) * 0.05, value })
-        )
-        const volumeTime = msg.captured_at ?? now
+        msg.pitches.forEach((value, i) => {
+          const t = msg.pitch_times?.[i] ?? volumeTime - (msg.pitches.length - 1 - i) * 0.05
+          samples.push({ t, value })
+        })
         const volumes = volumeRef.current
         volumes.push({ t: volumeTime, value: msg.volume_dbfs })
-        while (samples.length && samples[0].t < now - VOICE_WINDOW_S - 1) samples.shift()
+        while (samples.length && samples[0].t < volumeTime - VOICE_WINDOW_S - 1) samples.shift()
         while (volumes.length && volumes[0].t < volumeTime - VOICE_WINDOW_S - 1) volumes.shift()
       } else if (msg.type === 'transcript') {
         applyTranscript(msg)

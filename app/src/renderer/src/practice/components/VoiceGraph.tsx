@@ -13,7 +13,6 @@ type Props = {
   typicalHz?: number | null
   spikeHz?: number | null
   calibrated?: boolean
-  live: boolean // false: freeze on the last reading (session ended)
 }
 
 export const VOICE_WINDOW_S = 15
@@ -21,7 +20,8 @@ const SCALES = {
   pitch: { ticks: [50, 100, 200, 300, 400, 500], unit: 'Hz' },
   volume: { ticks: [-80, -60, -40, -20, 0], unit: 'dBFS' }
 }
-const JOIN_S = 0.25 // readings further apart than this aren't joined (a pause in speech)
+const PITCH_JOIN_S = 0.151 // bridge up to two missing 50 ms readings
+const VOLUME_JOIN_S = 0.25
 const COLORS = {
   grid: '#38334e',
   label: '#8f89a8',
@@ -36,15 +36,14 @@ export default function VoiceGraph({
   metric,
   typicalHz = null,
   spikeHz = null,
-  calibrated = false,
-  live
+  calibrated = false
 }: Props): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const linesRef = useRef({ typicalHz, spikeHz, calibrated, live })
+  const linesRef = useRef({ typicalHz, spikeHz, calibrated })
 
   useEffect(() => {
-    linesRef.current = { typicalHz, spikeHz, calibrated, live }
-  }, [typicalHz, spikeHz, calibrated, live])
+    linesRef.current = { typicalHz, spikeHz, calibrated }
+  }, [typicalHz, spikeHz, calibrated])
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -82,7 +81,7 @@ function render(
   w: number,
   h: number,
   samples: VoiceSample[],
-  lines: { typicalHz: number | null; spikeHz: number | null; calibrated: boolean; live: boolean },
+  lines: { typicalHz: number | null; spikeHz: number | null; calibrated: boolean },
   metric: Props['metric']
 ): void {
   const { ticks, unit } = SCALES[metric]
@@ -93,12 +92,11 @@ function render(
   if (right <= left || bottom <= top) return
 
   const last = samples.at(-1)
-  const end = metric === 'pitch' && lines.live ? performance.now() / 1000 : (last?.t ?? 0)
-  // Let short volume recordings fill the chart, then scroll once 15 seconds have been captured.
-  const windowSeconds =
-    metric === 'volume' && last
-      ? Math.min(VOICE_WINDOW_S, Math.max(0.3, end - samples[0].t))
-      : VOICE_WINDOW_S
+  const end = last?.t ?? 0
+  // Use the available capture time for short sessions, then roll through the latest 15 seconds.
+  const windowSeconds = last
+    ? Math.min(VOICE_WINDOW_S, Math.max(0.3, end - samples[0].t))
+    : VOICE_WINDOW_S
   const start = end - windowSeconds
   const x = (t: number): number => left + ((t - start) / windowSeconds) * (right - left)
   const y = (value: number): number => {
@@ -152,7 +150,8 @@ function render(
       `${lines.calibrated ? 'Calibrated' : 'Typical'} ${lines.typicalHz.toFixed(0)} Hz`
     )
 
-  // Break the trace when readings are missing.
+  // Keep short pitch gaps readable and leave longer periods without a reading blank.
+  const joinSeconds = metric === 'pitch' ? PITCH_JOIN_S : VOLUME_JOIN_S
   ctx.save()
   ctx.beginPath()
   ctx.rect(left, top - 3, right - left, bottom - top + 6)
@@ -161,23 +160,33 @@ function render(
   ctx.lineWidth = 2
   ctx.lineJoin = 'round'
   ctx.beginPath()
-  let prev: VoiceSample | null = null
+  const dots: { x: number; y: number }[] = []
+  let prev: { t: number; x: number; y: number } | null = null
+  let segmentHasLine = false
   for (const s of samples) {
-    if (s.t < start - JOIN_S || s.value === null) {
-      prev = null
-      continue
+    if (s.t < start - joinSeconds || s.value === null) continue
+    const point = { t: s.t, x: x(s.t), y: y(s.value) }
+    if (prev && s.t - prev.t <= joinSeconds) {
+      ctx.lineTo(point.x, point.y)
+      segmentHasLine = true
+    } else {
+      if (prev && !segmentHasLine && prev.t >= start) dots.push(prev)
+      ctx.moveTo(point.x, point.y)
+      segmentHasLine = false
     }
-    if (prev && s.t - prev.t <= JOIN_S) ctx.lineTo(x(s.t), y(s.value))
-    else ctx.moveTo(x(s.t), y(s.value))
-    prev = s
+    prev = point
   }
   ctx.stroke()
   ctx.restore()
-  // single isolated readings would be invisible as a path; mark the latest one
-  if (last && last.value !== null && last.t >= start) {
+  // Draw isolated readings and the endpoint so they remain visible without a line.
+  if (prev && prev.t >= start && (!segmentHasLine || prev.t === end)) dots.push(prev)
+  if (dots.length) {
     ctx.fillStyle = COLORS.trace
     ctx.beginPath()
-    ctx.arc(x(last.t), y(last.value), 3, 0, 2 * Math.PI)
+    for (const dot of dots) {
+      ctx.moveTo(dot.x + 3, dot.y)
+      ctx.arc(dot.x, dot.y, 3, 0, 2 * Math.PI)
+    }
     ctx.fill()
   }
 }

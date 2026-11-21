@@ -267,11 +267,16 @@ class AudioAnalyzer:
         v, cal = self.voice, self.voice_calibration
         pitches, self.recent_pitches = self.recent_pitches, []
         captured_at = self._recording_clock(self.blocks * BLOCK_SIZE - 1)
+        pitch_times = [
+            self._recording_clock(block * BLOCK_SIZE - 1)
+            for block in range(self.blocks - len(pitches) + 1, self.blocks + 1)
+        ]
         return {
             "type": "voice",
             "captured_at": captured_at,
             "pitch_hz": round(v.latest_pitch_hz, 1) if v.latest_pitch_hz else None,
             "pitches": pitches,                     # one per 50 ms block, oldest first (for the graph)
+            "pitch_times": pitch_times,
             "volume_dbfs": round(float(v.latest_volume_dbfs), 1),
             # reference pitch for the graph, and the pitch where a spike alert would fire
             "typical_hz": round(float(v.typical_pitch_hz), 1) if v.typical_pitch_hz else None,

@@ -52,14 +52,16 @@ Hiding live banners does not turn off scoring.
 
 ```json
 {"type": "voice", "pitch_hz": 182.4, "pitches": [179.8, 182.4], "volume_dbfs": -31.2,
+ "pitch_times": [12.45, 12.5], "captured_at": 12.5,
  "typical_hz": 168.0, "spike_hz": 282.5,
  "calibrated": false, "calibrating": false, "message": ""}
 ```
 
 `captured_at` gives the latest reading's time on the renderer's monotonic clock, or `null`
-when audio arrives without timestamps. `pitch_hz` is the latest reading, `null` when the audio isn't voiced (silence, breath, s/t/k
-sounds). `pitches` holds every 50 ms reading since the last message, oldest first; the Voice pitch
-graph plots these. `typical_hz` is the calibrated pitch, or the running typical pitch before
+when audio arrives without timestamps. `pitch_hz` is the latest reading, `null` when no pitch
+could be measured. `pitches` holds the readings from each 50 ms block, oldest first.
+`pitch_times` gives their corresponding capture times, or `null` entries for untimed audio.
+`typical_hz` is the calibrated pitch, or the running typical pitch before
 calibration (`null` for the first second of speech). `spike_hz` is where a pitch-spike alert fires
 (`typical_hz` raised by the Live alerts pitch threshold, in semitones). `message` is the calibration
 status, such as "Voice: keep talking normally (1.5 / 3 s)" or "Voice calibrated: 180 Hz, -30 dBFS".

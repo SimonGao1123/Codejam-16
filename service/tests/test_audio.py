@@ -4,6 +4,7 @@ import shutil
 import struct
 import subprocess
 import wave
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -78,8 +79,8 @@ def test_repeated_fillers_cost_more_in_twenty_point_rubric():
     assert score_presentation(filler_counts={"um": 100})["score"] == 0
 
 
-def test_session_score_has_recording_relative_checkpoints(stt_model):
-    session = Session(stt_model)
+def test_session_score_has_recording_relative_checkpoints():
+    session = Session(Mock())
     session.audio.set_embedder(lambda texts: np.ones((len(texts), 1), dtype=np.float32))
 
     class Client:
@@ -93,8 +94,8 @@ def test_session_score_has_recording_relative_checkpoints(stt_model):
                 session.webcam.process({"t": 50.5 + i / 10, "width": 640, "height": 480})
 
             # Simulate one dropped mic chunk before a filler in the final phrase.
-            yield struct.pack("<d", 51) + np.zeros(SR // 10, dtype="<f4").tobytes()
-            yield struct.pack("<d", 51.6) + np.zeros(3 * SR, dtype="<f4").tobytes()
+            yield struct.pack("<d", 51) + np.zeros(SR // 20, dtype="<f4").tobytes()
+            yield struct.pack("<d", 51.55) + np.zeros(3 * SR, dtype="<f4").tobytes()
             # Moonshine reports a finished line with its start time (seconds of speech audio)
             transcriber = session.audio.transcriber
             transcriber.flush = lambda: (
@@ -110,8 +111,9 @@ def test_session_score_has_recording_relative_checkpoints(stt_model):
     with session.audio_worker:
         asyncio.run(audio_connection(client, session))
     readings = [message for message in client.sent if message["type"] == "voice"]
-    assert readings[0]["captured_at"] == pytest.approx(51.1 - 1 / SR)
+    assert readings[0]["captured_at"] == pytest.approx(51.6 - 1 / SR)
     assert readings[1]["captured_at"] == pytest.approx(51.7 - 1 / SR)
+    assert readings[0]["pitch_times"] == pytest.approx([51.05 - 1 / SR, 51.6 - 1 / SR])
     assert client.sent[0]["type"] == "script_loaded" and client.sent[0]["ready"]
     transcript, script_position, report = client.sent[-3:]
     assert transcript["fillers"]["you know"] == 1

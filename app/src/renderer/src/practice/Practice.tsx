@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { SessionScoreMessage } from './audio/audioProtocol'
 import { useAudioAnalysis } from './audio/useAudioAnalysis'
 import CameraPreview from './components/CameraPreview'
@@ -10,12 +10,20 @@ import SessionResults from './components/SessionResults'
 import TranscriptPanel from './components/TranscriptPanel'
 import { usePracticeSession } from './usePracticeSession'
 
-export default function Practice(): React.JSX.Element {
+export default function Practice({
+  visible,
+  onBusyChange
+}: {
+  visible: boolean
+  onBusyChange: (busy: boolean) => void
+}): React.JSX.Element {
   const session = usePracticeSession()
   const [score, setScore] = useState<SessionScoreMessage | null>(null)
   const { running, finished, camera, microphone, cameraStream, micStream, pending } = session
   const [script, setScript] = useState('') // optional; empty = no script tracking
   const speech = useAudioAnalysis(micStream, script, session.startedAt, setScore)
+  const busy = running || session.preparing || session.saving
+  useEffect(() => onBusyChange(busy), [busy, onBusyChange])
 
   return (
     <main className="ph-practice">
@@ -62,6 +70,7 @@ export default function Practice(): React.JSX.Element {
       {session.playbackUrl && (
         <PresentationPlayback
           url={session.playbackUrl}
+          visible={visible}
           recordedDuration={session.recordingDuration}
           checkpoints={score?.checkpoints ?? []}
         />
