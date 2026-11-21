@@ -23,6 +23,13 @@ samples (128 ms) each. Electron downsamples from the mic's own rate in an audio 
 {"type": "session_end"}      // session ended: finish the sentence still being spoken
 ```
 
+```json
+{"type": "script", "text": "Good morning everyone..." | null}   // the user's script; null/empty = off
+```
+
+Sent when the connection opens, when the script changes (once typing pauses), and before
+`session_start` if it changed. The service keeps it across sessions until it changes.
+
 Voice calibration has no message of its own: the webcam side's `calibrate` message (the Calibrate
 button) also starts voice calibration. Speak normally for 3 s (10 s timeout).
 
@@ -66,7 +73,42 @@ status, such as "Voice: keep talking normally (1.5 / 3 s)" or "Voice calibrated:
 Filler markers inside sentences: `[um]` / `[uh]` = detected and confirmed by Whisper; `[um?]` =
 sounded like a filler but Whisper wasn't available to confirm (counted as `filler?`).
 
+### `script_loaded`: reply to `script` (and again once the comparison model has loaded)
+
+```json
+{"type": "script_loaded", "chunks": ["Good morning everyone...", "..."], "ready": true}
+```
+
+`chunks` is the script split into parts (sentences, very short ones merged); `[]` = no script.
+`ready` is false while the comparison model is still loading.
+
+### `script_position`: at most every 1.5 s while new words arrive (only with a script)
+
+```json
+{"type": "script_position", "position": 6, "best": 6, "status": "jumped ahead",
+ "skipped": [3, 4, 5], "best_score": 0.82,
+ "events": ["Jumped ahead to chunk 7: skipped 4, 5, 6"]}
+```
+
+Parts are 0-based (`position` 6 = part 7; -1 = not started). `status`: on track / checking /
+jumped ahead / went back / stuck / ad-libbing (on topic, not a script line) / off topic.
+
+**How it works:** `script_compare.py` (same code as `experiments/script_compare/script_match.py`)
+compares the transcript the service already builds — no extra audio processing — with the script:
+all-MiniLM-L6-v2 embeddings (cosine similarity) + keyword overlap, position tracking that prefers
+moving forward, and events for skipping ahead, going back, going off topic and getting stuck.
+The position only moves **forward**: going back to an earlier part warns once ("Went back") but
+keeps your place, so `status` is `went back` while `position` stays put (`best` shows the part
+being matched).
+If tracking starts after the speaker did (model still loading), it first replays what was already
+said so earlier parts count as visited.
+
 ## Alerts on the webcam overlay
+
+Script pop-ups (no part numbers; mid-talk they mean nothing): `Skipped ahead` / `Went back` (rule
+`out_of_order`), `Back to your script` (rule `off_script`: threshold = "% match needed", duration =
+seconds off script before it fires) and `Move on to the next part` (rule `stuck`: threshold = how
+many times a part's expected speaking time, at least 20 s).
 
 The Live alerts tab's `volume`, `pitch`, `quiet` and `filler` rules (sent in the webcam side's
 `settings` message) control these: on/off, threshold (dB above / semitones above / dB below

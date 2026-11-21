@@ -5,7 +5,7 @@
 
 type RuleDefinition = {
   id: string
-  group: 'Voice' | 'Posture' | 'Hands' | 'Speech'
+  group: 'Voice' | 'Posture' | 'Hands' | 'Speech' | 'Script'
   name: string
   cue: string
   duration: number // seconds the problem has to last before the alert shows
@@ -137,6 +137,42 @@ export const rules = [
     instant: true,
     duration: 0,
     cooldown: 0
+  },
+  // Script rules apply only when a script was given on the Practice page
+  {
+    id: 'off_script',
+    group: 'Script',
+    name: 'Off script',
+    cue: 'Back to your script',
+    unit: '% match needed (higher = stricter)',
+    min: 10,
+    max: 80,
+    value: 35,
+    duration: 6,
+    cooldown: 10
+  },
+  {
+    id: 'out_of_order',
+    group: 'Script',
+    name: 'Out of order',
+    cue: 'Skipped ahead',
+    instant: true,
+    duration: 0,
+    cooldown: 0
+  },
+  {
+    id: 'stuck',
+    group: 'Script',
+    name: 'Stuck on one part',
+    cue: 'Move on to the next part',
+    unit: '× the time it takes to say it (at least 20 s)',
+    min: 1.5,
+    max: 8,
+    step: 0.5,
+    value: 3,
+    instant: true,
+    duration: 0,
+    cooldown: 0
   }
 ] as const satisfies readonly RuleDefinition[]
 
@@ -157,7 +193,7 @@ export const styles = [
   { id: 'silent', label: 'Silent' }
 ] as const
 
-export const groups = ['Voice', 'Posture', 'Hands', 'Speech'] as const
+export const groups = ['Voice', 'Posture', 'Hands', 'Speech', 'Script'] as const
 
 /** Rule fields that may be missing (rules without a threshold, non-instant rules). */
 export const ruleInfo = (rule: Rule): RuleDefinition => rule

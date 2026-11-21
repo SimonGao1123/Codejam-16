@@ -326,6 +326,82 @@
   overflow-wrap: anywhere;
 }
 
+.ph-script {
+  margin-top: 18px;
+  border: 1px solid #38334e;
+  border-radius: 16px;
+  background: #1e2030;
+}
+.ph-script-edit {
+  padding: 0 16px 14px;
+}
+.ph-script textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #4b4263;
+  border-radius: 10px;
+  background: #171826;
+  color: #f2f0fa;
+  font: inherit;
+  line-height: 1.55;
+}
+.ph-script textarea:disabled {
+  opacity: 0.6;
+}
+.ph-script-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding-top: 10px;
+}
+.ph-script-parts + .ph-script-bar {
+  padding: 10px 16px 14px;
+  border-top: 1px solid #38334e;
+}
+.ph-app .ph-script-button {
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 12px;
+  color: #231743;
+  background: #c4aeff;
+  font-weight: 700;
+}
+.ph-app .ph-script-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ph-script-parts {
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 16px 12px 44px;
+  line-height: 1.55;
+}
+.ph-script-parts li {
+  margin: 2px 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: #c4bfda;
+}
+.ph-script-parts li[data-state='done'] {
+  color: #8f89a8;
+}
+.ph-script-parts li[data-state='current'] {
+  background: #1f3a24;
+  color: #e6fbe9;
+  font-weight: 600;
+}
+.ph-script-parts li[data-state='skipped'] {
+  color: #8f89a8;
+  text-decoration: line-through;
+}
+.ph-script-parts li[data-best='true'] {
+  outline: 1px dashed #f6d58e;
+}
 .ph-pitch {
   margin-top: 18px;
   border: 1px solid #38334e;

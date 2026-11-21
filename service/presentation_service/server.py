@@ -20,6 +20,7 @@ import numpy as np
 from websockets.asyncio.server import serve
 
 from .audio_analysis import AudioAnalyzer
+from .script_compare import Embedder
 from .transcript import load_vosk, load_whisper
 from .webcam_analysis import WebcamAnalyzer
 
@@ -102,6 +103,8 @@ async def audio_connection(ws, session):
                 await ws.send(json.dumps(out))
         elif msg["type"] == "calibrate":
             session.audio.request_calibration()
+        elif msg["type"] == "script":
+            await ws.send(json.dumps(await run(session.audio.set_script, msg.get("text"))))
     log.info("audio client disconnected")
 
 
@@ -119,6 +122,16 @@ async def main(host="127.0.0.1", port=8766, whisper_model="tiny.en"):
             except Exception as err:                 # offline on first run, etc.
                 log.warning("Whisper unavailable (%s); suspected fillers will show as [um?]", err)
         threading.Thread(target=load, daemon=True).start()
+
+    # the script comparison model (all-MiniLM-L6-v2, ~90 MB download on first run), also in the
+    # background; a script that arrives before it's ready starts being tracked once it is
+    def load_embedder():
+        try:
+            session.audio.set_embedder(Embedder())
+            log.info("script comparison model ready")
+        except Exception as err:
+            log.warning("script comparison unavailable (%s)", err)
+    threading.Thread(target=load_embedder, daemon=True).start()
 
     async def handler(ws):
         path = ws.request.path

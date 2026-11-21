@@ -10,6 +10,7 @@ dependencies = [
     "webrtcvad-wheels>=2.0.14.post1",
     "faster-whisper>=1.1",
     "av<17",                 # newer PyAV breaks faster-whisper
+    "fastembed>=0.4",        # script comparison: all-MiniLM-L6-v2 as ONNX (no PyTorch)
 ]
 
 [dependency-groups]
