@@ -93,6 +93,7 @@ async def audio_connection(ws, session):
     run = lambda fn, *args: loop.run_in_executor(session.audio_worker, fn, *args)  # noqa: E731
     await run(session.audio.reset)
     started_at = None
+    started_monotonic = None                             # server-side clock for the session length
     try:
         async for raw in ws:
             if isinstance(raw, bytes):                   # float32 little-endian, 16 kHz mono
@@ -109,6 +110,7 @@ async def audio_connection(ws, session):
             msg = json.loads(raw)
             if msg["type"] == "session_start":
                 started_at = msg.get("started_at")
+                started_monotonic = time.monotonic()
                 session.scoring_client = ws
                 session.webcam.start_scoring(started_at)
                 await run(session.audio.reset)
@@ -117,6 +119,10 @@ async def audio_connection(ws, session):
                 session.webcam.scoring = False
                 body_incidents = session.webcam.incidents.copy()
                 body_checkpoints = session.webcam.checkpoints.copy()
+                # length of the presentation, used by the scorer to scale deductions
+                duration_seconds = (
+                    time.monotonic() - started_monotonic if started_monotonic is not None else None
+                )
 
                 def finish_and_score():
                     messages = session.audio.finish()
@@ -127,6 +133,7 @@ async def audio_connection(ws, session):
                         body_incidents=body_incidents,
                         pace=session.audio.pace_summary(),
                         pace_target_wpm=session.audio.pace_target_wpm(),
+                        duration_seconds=duration_seconds,
                     )
                     checkpoints = []
                     if started_at is not None:
@@ -137,8 +144,18 @@ async def audio_connection(ws, session):
                         ]
                     return [*messages, {"type": "session_score", **report, "checkpoints": checkpoints}]
 
-                for out in await run(finish_and_score):
+                # for out in await run(finish_and_score):
+                #     await ws.send(json.dumps(out))
+                results = await run(finish_and_score)
+                score_msg = results[-1]
+                log.info("session length: %.2f min, scoring_minutes: %s, source: %s, score: %s",
+                         score_msg.get("duration_minutes") or 0,
+                         score_msg.get("scoring_minutes"),
+                         score_msg.get("duration_source"),
+                         score_msg.get("score"))
+                for out in results:
                     await ws.send(json.dumps(out))
+                    
             elif msg["type"] == "calibrate":
                 session.audio.request_calibration()
             elif msg["type"] == "script":
