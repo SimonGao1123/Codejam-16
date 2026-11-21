@@ -136,6 +136,7 @@ async def audio_connection(ws, session):
                         pace_target_wpm=session.audio.pace_target_wpm(),
                         duration_seconds=duration_seconds,
                         volume=session.audio.volume_summary(),
+                        script_match=session.audio.script_match()
                     )
                     checkpoints = []
                     if started_at is not None:

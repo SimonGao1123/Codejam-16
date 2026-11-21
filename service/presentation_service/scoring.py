@@ -50,12 +50,14 @@ PACE_COMFORT_BAND_WPM = 40
 PACE_ZERO_CREDIT_DISTANCE_WPM = 60
 PACE_CONSISTENT_CV = 0.15
 PACE_INCONSISTENT_CV = 0.45
-VOLUME_MAX_POINTS = 4            # projection 2, steady volume 1, long pauses 1
-PROJECTION_FULL_DB = 25          # typical speech this far above the room's noise = full credit
-PROJECTION_ZERO_DB = 10          # ...this close (barely above "not speaking") = none
-VOLUME_STEADY_DB = 3             # spread (standard deviation) of the 10 s speech levels: full credit
-VOLUME_UNSTEADY_DB = 9           # ...no credit
-LONG_PAUSE_RULE = (0.5, 1, "Keep pauses to a few seconds so you don't lose the room.")
+
+# Script accuracy: script_match is 0-1 (1 = delivered exactly the script).
+# Full credit at SCRIPT_GOOD_MATCH or above, no credit at SCRIPT_BAD_MATCH or below.
+SCRIPT_MAX_POINTS = 6
+SCRIPT_GOOD_MATCH = 0.85
+SCRIPT_BAD_MATCH = 0.5
+
+SCORE_OUT_OF = 100
 
 
 def _count(value: int) -> int:
@@ -161,47 +163,29 @@ def _pace_category(pace: Mapping[str, object] | None, target_wpm: float) -> dict
     return _category(checks)
 
 
-def _volume_category(volume: Mapping[str, object] | None, voice_incidents: Mapping[str, int] | None) -> dict:
-    """Projection (speech level above the room's noise, 2 pts), steady volume across the session
-    (1 pt) and long pauses (1 pt)."""
-    checks = {}
-    if volume is not None:
-        speech, room, segments = volume.get("speech_dbfs"), volume.get("room_dbfs"), volume.get("segment_dbfs") or []
-        if isinstance(speech, (int, float)) and isinstance(room, (int, float)):
-            margin = float(speech) - float(room)
-            short = (PROJECTION_FULL_DB - margin) / (PROJECTION_FULL_DB - PROJECTION_ZERO_DB)
-            deduction = round(2 * min(1, max(0, short)), 2)
-            checks["projection"] = {
-                "count": 0,
-                "max_points": 2,
-                "deduction": deduction,
-                "feedback": (f"Project more: your voice was {margin:.0f} dB above the room's background "
-                             f"noise; aim for {PROJECTION_FULL_DB} dB or more." if deduction else None),
-                "margin_db": round(margin, 1),
-            }
-        if len(segments) >= 2:
-            mean = sum(segments) / len(segments)
-            spread = (sum((s - mean) ** 2 for s in segments) / len(segments)) ** 0.5
-            deduction = round(min(1, max(0, (spread - VOLUME_STEADY_DB) / (VOLUME_UNSTEADY_DB - VOLUME_STEADY_DB))), 2)
-            trailing_off = segments[-1] == min(segments) and segments[0] - segments[-1] > VOLUME_STEADY_DB
-            checks["steady_volume"] = {
-                "count": len(segments),
-                "max_points": 1,
-                "deduction": deduction,
-                "feedback": None if not deduction else (
-                    "You got quieter as you went on; keep your volume up to the end." if trailing_off
-                    else "Keep your volume even from one part of the presentation to the next."),
-            }
-    if voice_incidents is not None and "pause" in voice_incidents:
-        rate, maximum, tip = LONG_PAUSE_RULE
-        count = _count(voice_incidents["pause"])
-        checks["long_pause"] = {
-            "count": count,
-            "max_points": maximum,
-            "deduction": min(count * rate, maximum),
-            "feedback": tip if count else None,
+def _script_category(script_match: float | None) -> dict:
+    """Score how closely the delivery followed the script (script_match is 0-1)."""
+    if not isinstance(script_match, (int, float)) or isinstance(script_match, bool):
+        return _category({})
+    match = float(script_match)
+    if match != match:  # NaN
+        return _category({})
+    match = min(1.0, max(0.0, match))
+    deduction = _rate_deduction(
+        SCRIPT_GOOD_MATCH - match, 0.0, SCRIPT_GOOD_MATCH - SCRIPT_BAD_MATCH, SCRIPT_MAX_POINTS
+    )
+    return _category({
+        "script_match": {
+            "count": 0,
+            "match": round(match, 3),
+            "good_match": SCRIPT_GOOD_MATCH,
+            "bad_match": SCRIPT_BAD_MATCH,
+            "max_points": SCRIPT_MAX_POINTS,
+            "deduction": round(deduction, 3),
+            "feedback": "Stay closer to your script; parts were skipped or reworded too much."
+                        if deduction > 0 else None,
         }
-    return _category(checks)
+    })
 
 
 def score_presentation(
@@ -213,9 +197,18 @@ def score_presentation(
     pace_target_wpm: float = 140,
     duration_seconds: float | None = None,
     expected_minutes: float | None = None,
+    script_match: float | None = None,
     volume: Mapping[str, object] | None = None,
 ) -> dict:
-    """Return a JSON-ready score out of 20, category breakdown, and ordered tips.
+    """Return a JSON-ready score out of 100, category breakdown, and ordered tips.
+
+    volume is the summary from AudioAnalyzer.volume_summary(). It is accepted so
+    the service can pass it, but it is NOT used in the score yet (volume is still
+    scored from the "volume" and "quiet" incident counts).
+
+    script_match is how closely the delivery followed the user's script, from
+    0 to 1. Pass None when no script was provided; the script category is then
+    left out of the score entirely.
 
     An empty filler mapping means transcription found no fillers. Pass None
     when no transcript was available. The transcript's "filler?" tally is
@@ -227,10 +220,9 @@ def score_presentation(
     as MIN_SCORING_MINUTES. The result's scoring_minutes shows the length used.
 
     The complete rubric allocates 6 points for fillers, 3 for voice tone,
-    The complete rubric allocates 6 points for fillers, 3 for voice tone, 4 for volume
-    (projection, steadiness, long pauses; `volume` is AudioAnalyzer.volume_summary()),
-    4 for speaking pace, and 11 for body language. The score uses the available points as its
-    denominator. measured_points shows how much of the rubric was evaluated.
+    4 for speaking pace, 11 for body language, and 6 for script accuracy. The score
+    is the share of the available points kept, scaled to 100. measured_points shows
+    how much of the rubric was evaluated.
     With no measured data, score is None.
     """
     minutes = _minutes(duration_seconds)
@@ -260,9 +252,9 @@ def score_presentation(
     categories = {
         "filler": _category(filler_checks),
         "voice_tone": _incident_category(voice_incidents, VOICE_RULES, scoring_minutes, length_known),
-        "volume": _volume_category(volume, voice_incidents),
         "speaking_pace": _pace_category(pace, pace_target_wpm),
         "body_language": _incident_category(body_incidents, BODY_RULES, scoring_minutes, length_known),
+        "script_accuracy": _script_category(script_match),
     }
     measured_points = sum(category["max_points"] for category in categories.values())
     deducted = sum(category["deduction"] for category in categories.values())
@@ -275,9 +267,9 @@ def score_presentation(
     ]
     feedback.sort(key=lambda tip: tip["deduction"], reverse=True)
     return {
-        "score": round((MAX_SCORE + PACE_MAX_POINTS + VOLUME_MAX_POINTS) * (measured_points - deducted) / measured_points, 2)
+        "score": round(SCORE_OUT_OF * (measured_points - deducted) / measured_points, 1)
         if measured_points else None,
-        "max_score": MAX_SCORE + PACE_MAX_POINTS + VOLUME_MAX_POINTS,
+        "max_score": SCORE_OUT_OF,
         "measured_points": measured_points,
         "duration_minutes": round(minutes, 2) if length_known else None,
         "duration_source": duration_source,
