@@ -9,7 +9,7 @@ when one stays past its threshold:
   - both hands visible               -> "Show both hands or step back"
   - hand motion: none for ~10 s      -> "Use your hands"
                  too fast / too busy -> "Slow your hands"
-                 same gesture looping-> "Vary your gestures"
+                 same gesture looping-> "Vary your gestures"  (wrists and fingers)
   - hand angle (per hand)            -> shown next to each wrist, no alert
 
 Calibration: stand the way you normally present, looking at the camera, with
@@ -74,12 +74,20 @@ HANDS_MISSING_S = 1.5       # fewer than 2 hands seen for this long = warn
 HAND_STILL = 0.15           # average wrist speed (shoulder-widths/s) over the last 1 s below this = not moving
 HAND_STILL_S = 10           # not moving (or both hands at rest) for this long = warn
 REST_RADIUS = 0.3           # wrist within this many shoulder widths of its calibrated rest spot = at rest
+HAND_GRACE_S = 0.5          # a hand dropping out for less than this still counts as "both hands visible"
 HAND_FAST = 3.0             # wrist speed over the last 0.3 s above this = too fast
 HAND_BUSY = 1.5             # average wrist speed over the last 5 s above this = too much motion
 REPEAT_WINDOW_S = 6.0       # repetition is checked over this much wrist history
-REPEAT_SCORE = 0.6          # autocorrelation peak (0-1) above this = same gesture looping
-REPEAT_MIN_AMP = 0.08       # ignore tiny motions (shoulder widths) when checking for repetition
+REPEAT_SCORE = 0.8          # self-similarity peak (0-1) above this = same gesture looping (tests: repeats 0.95+, non-repeats <= 0.6)
+REPEAT_MIN_AMP = 0.08       # ignore tiny wrist motions (shoulder widths, after removing drift)
+FINGER_MIN_AMP = 0.25       # ignore tiny finger motions (hand lengths, all finger points combined)
+REPEAT_MIN_COVERAGE = 0.6   # a wrist/hand must be seen in this share of the window to be checked
 REPEAT_LAGS_S = (0.4, 2.5)  # a repeated gesture takes between this many seconds per cycle
+REPEAT_DIP = 0.3            # similarity must first drop below this before a later peak counts as a cycle
+REPEAT_DETREND_S = 3.0      # moving average subtracted before the check; >= longest cycle so cycles survive
+# Finger points tracked relative to the wrist, in hand lengths (wrist -> middle knuckle):
+# thumb, index, middle and pinky tips + middle knuckle (hand orientation / wrist bend).
+FINGER_POINTS = (4, 8, 12, 20, 9)
 CALIBRATE_S = 2.0           # calibration records this long and keeps the median of each measurement
 BUTTON = (12, -60, 230, -16)  # calibrate button: x0, y0, x1, y1 (negative y = from frame bottom)
 
@@ -164,20 +172,22 @@ def hand_angle(hand, w, h):
 
 
 class HandMotion:
-    """Keeps a few seconds of wrist positions and measures speed, busyness and repetition."""
+    """Keeps a few seconds of wrist and finger positions and measures speed, busyness and repetition."""
 
     RATE = 15                       # Hz; history is resampled to this for the repetition check
+    CHANNELS = ("L wrist", "R wrist", "L fingers", "R fingers")
 
     def __init__(self):
-        self.history = deque()      # (time, [(x, y) or None, (x, y) or None])
+        self.history = deque()      # (time, [L wrist, R wrist, L fingers, R fingers]); each array or None
         self.speeds = deque()       # (time, speed over the last 0.3 s)
 
     def clear(self):
         self.history.clear()
         self.speeds.clear()
 
-    def add(self, now, wrists):
-        self.history.append((now, wrists))
+    def add(self, now, wrists, fingers):
+        """wrists: (x, y) per side in shoulder widths; fingers: flat array per side in hand lengths."""
+        self.history.append((now, [w and np.array(w) for w in wrists] + list(fingers)))
         while now - self.history[0][0] > REPEAT_WINDOW_S:
             self.history.popleft()
         self.speeds.append((now, self.speed(0.3)))
@@ -191,10 +201,10 @@ class HandMotion:
         recent = [e for e in self.history if self.history[-1][0] - e[0] <= window]
         best = 0.0
         for i in range(2):
-            seen = [(t, w[i]) for t, w in recent if w[i]]
+            seen = [(t, c[i]) for t, c in recent if c[i] is not None]
             if len(seen) >= 2:
                 (t0, a), (t1, b) = seen[0], seen[-1]
-                best = max(best, math.hypot(a[0] - b[0], a[1] - b[1]) / max(t1 - t0, 1e-6))
+                best = max(best, float(np.linalg.norm(a - b)) / max(t1 - t0, 1e-6))
         return best
 
     def activity(self, window):
@@ -203,35 +213,72 @@ class HandMotion:
         recent = [v for t, v in self.speeds if self.speeds[-1][0] - t <= window]
         return sum(recent) / len(recent) if recent else 0.0
 
-    def repetition(self):
-        """0-1: how strongly either wrist's path repeats itself (autocorrelation peak)."""
+    def repetition(self, wrists=True):
+        """(score 0-1, channel name): the strongest self-repeating wrist or finger motion.
+        wrists=False checks fingers only (resting wrist positions just wobble)."""
         if not self.history or self.history[-1][0] - self.history[0][0] < 0.8 * REPEAT_WINDOW_S:
-            return 0.0
+            return 0.0, None
         times = np.array([t for t, _ in self.history])
         grid = np.arange(times[0], times[-1], 1 / self.RATE)
-        lo, hi = (int(s * self.RATE) for s in REPEAT_LAGS_S)
-        best = 0.0
-        for i in range(2):
-            mask = np.array([w[i] is not None for _, w in self.history])
-            if mask.mean() < 0.7:
+        best, where = 0.0, None
+        for i, name in enumerate(self.CHANNELS):
+            if i < 2 and not wrists:
                 continue
-            pts = np.array([w[i] for _, w in self.history if w[i]])
-            x = np.interp(grid, times[mask], pts[:, 0])
-            y = np.interp(grid, times[mask], pts[:, 1])
-            x, y = x - x.mean(), y - y.mean()
-            energy = (x * x + y * y).sum()
-            if math.sqrt(energy / len(grid)) < REPEAT_MIN_AMP:
-                continue
-            n = len(grid)
-            ac = np.array([(x[:n - k] * x[k:] + y[:n - k] * y[k:]).sum() / energy * n / (n - k)
-                           for k in range(min(hi + 2, n - 1))])
-            # a real repeat is a peak that comes after the correlation has dropped off
-            dipped = False
-            for k in range(1, len(ac) - 1):
-                dipped = dipped or ac[k] < 0.3
-                if dipped and lo <= k <= hi and ac[k] >= ac[k - 1] and ac[k] >= ac[k + 1]:
-                    best = max(best, float(ac[k]))
-        return min(best, 1.0)
+            score = self._channel_score(times, grid, [c[i] for _, c in self.history],
+                                        REPEAT_MIN_AMP if i < 2 else FINGER_MIN_AMP)
+            if score > best:
+                best, where = score, name
+        return best, where
+
+    def _channel_score(self, times, grid, values, min_amp):
+        mask = np.array([v is not None for v in values])
+        if mask.mean() < REPEAT_MIN_COVERAGE:
+            return 0.0
+        pts = np.array([v for v in values if v is not None])
+        sig = np.column_stack([np.interp(grid, times[mask], pts[:, j]) for j in range(pts.shape[1])])
+        # subtract a moving average so drift and sudden repositioning (arm sinking, moving the hand
+        # somewhere new) aren't mistaken for, or hide, a cycle
+        k = int(REPEAT_DETREND_S * self.RATE) | 1
+        padded = np.pad(sig, ((k // 2, k // 2), (0, 0)), mode="edge")
+        kernel = np.ones(k) / k
+        sig = sig - np.column_stack([np.convolve(padded[:, j], kernel, "valid") for j in range(sig.shape[1])])
+        if math.sqrt((sig * sig).sum(axis=1).mean()) < min_amp:
+            return 0.0
+        n = len(sig)
+        lo, hi = (int(x * self.RATE) for x in REPEAT_LAGS_S)
+        # similarity of the path with itself shifted by k samples, normalized by both overlapping parts
+        # so it stays within -1..1 (at least half the window always overlaps)
+        ac = []
+        for k in range(min(hi + 2, n // 2)):
+            a, b = sig[:n - k], sig[k:]
+            ac.append(float((a * b).sum() / (math.sqrt((a * a).sum() * (b * b).sum()) + 1e-12)))
+        # a real repeat is a peak that comes after the similarity has dropped off
+        best, dipped = 0.0, False
+        for k in range(1, len(ac) - 1):
+            dipped = dipped or ac[k] < REPEAT_DIP
+            if dipped and lo <= k <= hi and ac[k] >= ac[k - 1] and ac[k] >= ac[k + 1]:
+                best = max(best, ac[k])
+        return best
+
+
+def finger_features(hand, w, h):
+    """Wrist pixel position and FINGER_POINTS relative to the wrist, in hand lengths (flat array)."""
+    pts = np.array([(p.x * w, p.y * h) for p in hand])
+    size = np.linalg.norm(pts[HAND_MIDDLE_MCP] - pts[HAND_WRIST]) or 1.0
+    return pts[HAND_WRIST], ((pts[list(FINGER_POINTS)] - pts[HAND_WRIST]) / size).ravel()
+
+
+def match_hands(hands, pose_wrists_px, w, h):
+    """Assign each detected hand to the nearest pose wrist (index 0 = L_WRIST, 1 = R_WRIST)."""
+    fingers = [None, None]
+    best = [math.inf, math.inf]
+    for hand in hands:
+        wrist_px, feats = finger_features(hand, w, h)
+        dists = [np.linalg.norm(wrist_px - p) if p is not None else math.inf for p in pose_wrists_px]
+        side = int(np.argmin(dists))
+        if dists[side] < best[side]:
+            best[side], fingers[side] = dists[side], feats
+    return fingers
 
 
 def label(frame, y, text, color=WHITE):
@@ -338,6 +385,7 @@ def main():
 
     calib = Calibration()
     motion = HandMotion()
+    both_seen_at = -math.inf              # last time both hands were detected
     last_ts, fps = 0, 0.0
     prev = time.time()
 
@@ -363,6 +411,10 @@ def main():
 
         tilt_bad = down_bad = fast = still = repeating = False
         both_hands = len(hand_res.hand_landmarks) >= 2
+        if both_hands:
+            both_seen_at = now
+        # brief dropouts (motion blur) don't count as a missing hand for still / repeat checks
+        both_recent = now - both_seen_at <= HAND_GRACE_S
         tilt = pitch = eyes = None
         wrists = [None, None]
         base = calib.baseline
@@ -385,22 +437,27 @@ def main():
             mx, my = (lm[L_SHOULDER].x + lm[R_SHOULDER].x) / 2 * w, (lm[L_SHOULDER].y + lm[R_SHOULDER].y) / 2 * h
             wrists = [((lm[i].x * w - mx) / width, (lm[i].y * h - my) / width) if lm[i].visibility > 0.5 else None
                       for i in (L_WRIST, R_WRIST)]
-            motion.add(now, wrists)
-            speed, busy, repeat = motion.speed(0.3), motion.activity(5.0), motion.repetition()
+            pose_wrists_px = [np.array((lm[i].x * w, lm[i].y * h)) if wrists[j] else None
+                              for j, i in enumerate((L_WRIST, R_WRIST))]
+            motion.add(now, wrists, match_hands(hand_res.hand_landmarks, pose_wrists_px, w, h))
+            speed, busy = motion.speed(0.3), motion.activity(5.0)
             fast = speed > HAND_FAST or busy > HAND_BUSY
             # at rest = every hand with a calibrated rest spot is in view and within REST_RADIUS of it
             rests = [base[k] if base else None for k in ("rest_l", "rest_r")]
             at_rest = any(rests) and all(p and math.dist(r, p) < REST_RADIUS for r, p in zip(rests, wrists) if r)
+            # resting wrist positions only wobble, so at rest only finger motion is checked for repeats
+            repeat, repeat_where = motion.repetition(wrists=not at_rest)
             for r in rests:
                 if r:
                     cv2.circle(frame, (int(mx + r[0] * width), int(my + r[1] * width)), int(REST_RADIUS * width),
                                GREEN if at_rest else WHITE, 1)
             # stillness and repetition only count when both hands are actually in view
-            still = both_hands and (motion.activity(1.0) < HAND_STILL or at_rest)
-            repeating = both_hands and repeat > REPEAT_SCORE
+            still = both_recent and (motion.activity(1.0) < HAND_STILL or at_rest)
+            repeating = both_recent and repeat > REPEAT_SCORE
             still_s = now - still_alert.bad_since if still_alert.bad_since else 0
             y += 26
             label(frame, y, f"hands: speed {speed:.1f}  avg {busy:.1f}  repeat {repeat:.2f}"
+                            + (f" ({repeat_where})" if repeat_where and repeat > 0.3 else "")
                             + (f"  still {still_s:.0f}s" if still_s >= 1 else "")
                             + ("  at rest" if at_rest else ""),
                   RED if fast or repeating or still_s > HAND_STILL_S else WHITE)
