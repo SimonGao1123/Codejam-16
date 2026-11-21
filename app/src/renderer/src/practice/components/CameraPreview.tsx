@@ -12,6 +12,8 @@ type Props = {
   logWebcam: (message: ClientMessage) => void
   wpm: number | null
   wpmUpdatedAt: number | null
+  avgWpm: number | null
+  desiredWpm: number | null
   onCalibrated: (done: boolean) => void
   children: ReactNode
 }
@@ -24,6 +26,8 @@ export default function CameraPreview({
   logWebcam,
   wpm,
   wpmUpdatedAt,
+  avgWpm,
+  desiredWpm,
   onCalibrated,
   children
 }: Props): React.JSX.Element {
@@ -52,6 +56,8 @@ export default function CameraPreview({
           stream={cameraStream}
           wpm={wpm}
           wpmUpdatedAt={wpmUpdatedAt}
+          avgWpm={avgWpm}
+          desiredWpm={desiredWpm}
           onStatus={setStatus}
         />
         {!cameraStream && (

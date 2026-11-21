@@ -1,9 +1,11 @@
 // Optional script for the practice session. Before practising: paste it or attach a PDF (its text
 // is read into the box for review). While practising: the script split into parts, with the
 // current part highlighted and skipped parts struck through. No script = script tracking is off.
+// Underneath: the time the user has, which with a script sets the desired pace (words / time).
 
 import { useEffect, useRef, useState } from 'react'
 
+import { useAlertPreferences } from '../../liveAlert/useAlertPreferences'
 import type { AudioAnalysis } from '../audio/useAudioAnalysis'
 import { pdfText } from '../script/pdfText'
 
@@ -12,13 +14,17 @@ type Props = {
   setScript: (text: string) => void
   running: boolean
   speech: AudioAnalysis
+  targetMinutes: number | null // the time the user has to present; null = not set
+  setTargetMinutes: (minutes: number | null) => void
 }
 
 export default function ScriptPanel({
   script,
   setScript,
   running,
-  speech
+  speech,
+  targetMinutes,
+  setTargetMinutes
 }: Props): React.JSX.Element {
   const { scriptChunks: chunks, scriptReady, scriptPosition: pos, connected } = speech
   const [editing, setEditing] = useState(true)
@@ -54,6 +60,17 @@ export default function ScriptPanel({
       if (fileRef.current) fileRef.current.value = '' // allow attaching the same file again
     }
   }
+
+  // desired pace: Python's script words / time when both are set, else the Live alerts Target pace
+  const [preferences] = useAlertPreferences()
+  const sliderPace = preferences.rules.pace?.threshold ?? 140
+  const target = speech.paceTarget
+  const paceText =
+    target?.source === 'script' && script.trim() && targetMinutes
+      ? `Desired pace: ${target.desired_wpm.toFixed(0)} WPM (${target.script_words.toLocaleString()} words in ${targetMinutes} min)`
+      : targetMinutes
+        ? `Add a script to set your pace from your time. Until then: ${sliderPace} WPM (Live alerts target pace)`
+        : `Desired pace: ${sliderPace} WPM (Live alerts target pace). Enter your time and a script to pace yourself to finish on time.`
 
   const showParts = !editing && hasScript
   const status = pos
@@ -162,6 +179,27 @@ export default function ScriptPanel({
           </div>
         </div>
       )}
+      <div className="ph-script-pace">
+        <label>
+          Time you have
+          <input
+            type="number"
+            min={0.5}
+            step={0.5}
+            inputMode="decimal"
+            value={targetMinutes ?? ''}
+            onChange={(e) => {
+              const minutes = parseFloat(e.target.value)
+              setTargetMinutes(minutes > 0 ? minutes : null)
+            }}
+            disabled={running}
+            placeholder="–"
+            aria-label="Time you have, in minutes"
+          />
+          min
+        </label>
+        <span>{paceText}</span>
+      </div>
     </section>
   )
 }

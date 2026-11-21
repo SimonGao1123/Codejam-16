@@ -14,6 +14,7 @@ export class AudioAnalysisClient {
   onMessage: ((msg: AudioServerMessage) => void) | null = null
   onConnectionChange: ((connected: boolean) => void) | null = null
   private script: string | null = null
+  private targetSeconds: number | null = null
   private ws: WebSocket | null = null
   private closed = false
   private retry: ReturnType<typeof setTimeout> | null = null
@@ -48,6 +49,12 @@ export class AudioAnalysisClient {
     this.send({ type: 'script', text })
   }
 
+  /** Sends the time the user has now if connected, and again after every reconnect. */
+  setTargetTime(seconds: number | null): void {
+    this.targetSeconds = seconds
+    this.send({ type: 'target_time', seconds })
+  }
+
   close(): void {
     this.closed = true
     if (this.retry) clearTimeout(this.retry)
@@ -60,6 +67,7 @@ export class AudioAnalysisClient {
     this.ws = ws
     ws.onopen = () => {
       this.send({ type: 'script', text: this.script }) // a restarted service has no script
+      this.send({ type: 'target_time', seconds: this.targetSeconds })
       this.onConnectionChange?.(true)
     }
     ws.onmessage = (e) => {

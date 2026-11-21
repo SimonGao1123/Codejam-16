@@ -43,7 +43,10 @@ countdown, speeds) instead of the wall clock, so recorded sessions replay identi
 ```
 
 There's no manual calibration. At the start of each session (including "Start another session")
-the app sends this as soon as frames are analysed and the service is connected. With
+the app sends this as soon as frames are analysed and the service is connected, during the
+get-ready countdown. The session itself (`session_start`: timer, recording, audio analysis,
+scoring) only starts once both the countdown and this calibration are done; until then the app
+offers Cancel. With
 `when_ready`, the service **waits** (phase `arming`) until the face, both shoulders and both hands
 are in frame and the speaker holds fairly still (wrists and shoulders barely moving) for 0.75 s,
 then records 3 s of the resting position: shoulder tilt, head pitch, eye gaze, resting hands.
@@ -75,7 +78,7 @@ Sent when the connection opens and whenever a rule changes on the Live alerts ta
 | `still` | Use your hands | — |
 | `fast` | Slow your hands | wrist speed, shoulder widths / s |
 | `repeat` | Vary your gestures | % self-similarity (0.8 score = 80) |
-| `volume`, `pitch`, `quiet`, `pause`, `filler` | voice / filler alerts (applied by the audio side, see `audio-protocol.md`) | |
+| `volume`, `pitch`, `quiet`, `pause`, `pace`, `pace_avg`, `filler` | voice / filler alerts (applied by the audio side, see `audio-protocol.md`) | |
 | `off_script`, `out_of_order`, `stuck` | script alerts, only with a script (audio side, see `audio-protocol.md`) | % match needed / — / × expected time |
 
 `duration` = seconds the problem must last before the alert shows; `cooldown` = seconds after an

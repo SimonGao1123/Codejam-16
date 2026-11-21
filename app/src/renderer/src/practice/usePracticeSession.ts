@@ -4,13 +4,16 @@ import type { ClientMessage } from './camera/webcamProtocol'
 
 const COUNTDOWN_SECONDS = 3
 
-export function usePracticeSession() {
+/** `calibrated`: this session's posture calibration has finished (from WebcamControls). With the
+ *  camera on, the session (timer, recording, analysis, scoring) only starts once it has, after the
+ *  get-ready countdown; the two run at the same time. */
+export function usePracticeSession(calibrated: boolean) {
   const [camera, setCamera] = useState(true)
   const [microphone, setMicrophone] = useState(true)
   const [started, setStarted] = useState<number | null>(null)
   const [seconds, setSeconds] = useState(0)
   const [finished, setFinished] = useState(false)
-  const [discarded, setDiscarded] = useState(false) // stopped before calibration finished
+  const [waitingForCalibration, setWaitingForCalibration] = useState(false) // countdown done
   const [pending, setPending] = useState(false)
   const [countdown, setCountdown] = useState<number | null>(null)
   const [starting, setStarting] = useState(false)
@@ -25,7 +28,7 @@ export function usePracticeSession() {
   const generation = useRef(0)
   const recording = useRef<{ recorder: WebcamRecorder; start: Promise<number> } | null>(null)
   const running = started !== null
-  const preparing = pending || countdown !== null || starting
+  const preparing = pending || countdown !== null || waitingForCalibration || starting
 
   const releaseDevices = useCallback(() => {
     generation.current += 1
@@ -51,6 +54,7 @@ export function usePracticeSession() {
     let startedAt: number | undefined
     setStarting(true)
     setCountdown(null)
+    setWaitingForCalibration(false)
     if (tracks.length) {
       const recorder = new WebcamRecorder()
       const start = recorder.start(new MediaStream(tracks))
@@ -70,14 +74,29 @@ export function usePracticeSession() {
     setStarting(false)
   })
 
+  // countdown over: start now, or once the camera's calibration has finished
+  const finishCountdown = useEffectEvent(() => {
+    if (cameraStream && !calibrated) {
+      setCountdown(null)
+      setWaitingForCalibration(true)
+    } else void beginPresenting()
+  })
+
   useEffect(() => {
     if (countdown === null) return
     const timer = window.setTimeout(() => {
       if (countdown > 1) setCountdown(countdown - 1)
-      else void beginPresenting()
+      else finishCountdown()
     }, 1000)
     return () => window.clearTimeout(timer)
   }, [countdown])
+
+  // calibration finished after the countdown: start (from a timer, like the countdown itself)
+  useEffect(() => {
+    if (!waitingForCalibration || !calibrated) return
+    const timer = window.setTimeout(() => void beginPresenting(), 0)
+    return () => window.clearTimeout(timer)
+  }, [waitingForCalibration, calibrated])
 
   useEffect(() => {
     if (started === null) return
@@ -93,7 +112,6 @@ export function usePracticeSession() {
     const request = ++generation.current
     setSeconds(0)
     setFinished(false)
-    setDiscarded(false)
     setDeviceError('')
     setRecordingError('')
     setPlaybackUrl(null)
@@ -143,16 +161,27 @@ export function usePracticeSession() {
     setCountdown(COUNTDOWN_SECONDS)
   }
 
-  /** discard: stopped before calibration finished, so nothing is scored and the recording is
-   *  deleted instead of saved. */
-  function endPractice(discard = false): void {
+  /** Waiting for calibration (it waits until the speaker is in frame and still): give up and go
+   *  back to the start. Nothing was recorded or scored yet. */
+  function cancelPractice(): void {
+    if (started !== null) return
+    releaseDevices()
+    setCameraStream(null)
+    setMicStream(null)
+    setPending(false)
+    setCountdown(null)
+    setWaitingForCalibration(false)
+    setStarting(false)
+  }
+
+  function endPractice(): void {
     if (started === null) return
     const duration = (performance.now() - started) / 1000
     setSeconds(Math.floor(duration))
     setRecordingDuration(duration)
     const current = recording.current
     recording.current = null
-    const saved = current?.recorder.stop(discard)
+    const saved = current?.recorder.stop()
     releaseDevices()
     setCameraStream(null)
     setMicStream(null)
@@ -160,8 +189,7 @@ export function usePracticeSession() {
     setDeviceError('')
     setStarted(null)
     setFinished(true)
-    setDiscarded(discard)
-    if (saved && !discard) {
+    if (saved) {
       const request = generation.current
       setSaving(true)
       void saved
@@ -175,8 +203,6 @@ export function usePracticeSession() {
         .finally(() => {
           if (generation.current === request) setSaving(false)
         })
-    } else if (saved) {
-      void saved.catch(console.error) // discarded: deleting the files
     }
   }
 
@@ -193,10 +219,10 @@ export function usePracticeSession() {
     startedAt: started === null ? null : started / 1000,
     seconds,
     finished,
-    discarded,
     pending,
     preparing,
     countdown,
+    waitingForCalibration,
     saving,
     playbackUrl,
     recordingDuration,
@@ -206,6 +232,7 @@ export function usePracticeSession() {
     cameraStream,
     micStream,
     startPractice,
-    endPractice
+    endPractice,
+    cancelPractice
   }
 }

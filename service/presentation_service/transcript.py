@@ -117,6 +117,7 @@ class Transcriber:
         # pace
         self.frame_count = 0                          # audio clock: frame_count * FRAME_SEC seconds
         self.word_times = []                          # (start, end) per finished word (estimated in-line)
+        self.lines = []                               # (start, end, words) per finished line (ends at a pause)
         self.pace_history = deque()                   # (audio time, words so far incl. the partial line)
         self.last_voiced_at = None                    # audio time of the last frame with speech
         self.stream = self.model.create_stream(update_interval=UPDATE_INTERVAL)
@@ -169,6 +170,7 @@ class Transcriber:
             step = duration / len(words)
             self.word_times += [(start_time + i * step, start_time + (i + 1) * step)
                                 for i in range(len(words))]
+            self.lines.append((start_time, start_time + duration, len(words)))
 
         sentence = sentence_text(text)
         if sentence:

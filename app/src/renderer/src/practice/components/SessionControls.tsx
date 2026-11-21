@@ -17,6 +17,8 @@ type Props = {
   setMicrophone: (enabled: boolean) => void
   startPractice: () => Promise<void>
   endPractice: () => void
+  waitingForCalibration: boolean // countdown done, waiting for the camera calibration
+  cancelPractice: () => void
 }
 
 export default function SessionControls({
@@ -32,11 +34,14 @@ export default function SessionControls({
   setCamera,
   setMicrophone,
   startPractice,
-  endPractice
+  endPractice,
+  waitingForCalibration,
+  cancelPractice
 }: Props): React.JSX.Element {
   let actionLabel = finished ? 'Start another session' : 'Start practice'
   if (running) actionLabel = 'Stop presenting'
   if (preparing) actionLabel = 'Getting ready…'
+  if (waitingForCalibration) actionLabel = 'Cancel'
   if (saving) actionLabel = 'Saving recording…'
 
   return (
@@ -49,7 +54,13 @@ export default function SessionControls({
         {countdown === null ? clock(seconds) : countdown}
       </div>
       <p className="ph-time-label">
-        {preparing ? 'Get ready' : finished ? 'Session duration' : 'Elapsed time'}
+        {waitingForCalibration
+          ? 'Calibrating: the timer starts once you’re in frame and still'
+          : preparing
+            ? 'Get ready'
+            : finished
+              ? 'Session duration'
+              : 'Elapsed time'}
       </p>
       <fieldset disabled={running || preparing || saving}>
         <legend>Devices</legend>
@@ -78,8 +89,14 @@ export default function SessionControls({
       <button
         className="ph-session-action"
         data-active={running}
-        disabled={preparing || saving}
-        onClick={running ? endPractice : () => void startPractice()}
+        disabled={(preparing && !waitingForCalibration) || saving}
+        onClick={
+          running
+            ? endPractice
+            : waitingForCalibration
+              ? cancelPractice
+              : () => void startPractice()
+        }
       >
         {actionLabel}
       </button>

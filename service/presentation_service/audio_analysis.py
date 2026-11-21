@@ -11,7 +11,7 @@ from statistics import median
 import numpy as np
 
 from .script_compare import ScriptTracker, chunk_script
-from .transcript import FRAME, SR, Transcriber
+from .transcript import FRAME, SR, Transcriber, spoken_words
 from .voice import BLOCK_SIZE, BLOCK_SECONDS, VoiceMonitor
 
 VOICE_EVERY_BLOCKS = 2          # send a voice reading every 100 ms
@@ -24,10 +24,13 @@ SCRIPT_RULES = {"jump": "out_of_order", "back": "out_of_order", "off_topic": "of
 SCRIPT_CHECK_S = 1.5            # compare the transcript with the script at most this often
 SPEECH_MARGIN_DB = 10           # louder than the room's measured noise by this much = speaking
 SILENCE_LIMITS_DBFS = (-70.0, -30.0)   # keep the "not speaking" level sane if the measurement was off
-PACE_COMFORT_BAND_WPM = 40       # matches the scoring rubric's full-credit band
 VOLUME_MIN_SPEECH_S = 5         # volume is scored once there's this much voiced speech
 VOLUME_SEGMENT_S = 10           # volume steadiness compares the level of each 10 s of speech
 PACE_PAUSE_BREAK_S = 1           # deliberate presentation pauses do not lower the final pace score
+LIVE_PACE_TOLERANCE = 0.30       # live pace alert: live WPM this far (as a share) off the desired pace
+AVERAGE_PACE_TOLERANCE = 0.15    # average pace alert default (the Live alerts slider is a percentage)
+AVERAGE_LINES = 3                # average WPM = the last 3 finished transcript lines, pauses included
+DESIRED_WPM_LIMITS = (40.0, 250.0)   # keep a script / time-limit pace sane
 
 
 class AudioAnalyzer:
@@ -40,6 +43,8 @@ class AudioAnalyzer:
         self.noise_floor = None                     # room noise (dBFS) measured before the session
         self.script_chunks = []                     # the user's script, split into parts ([] = no script)
         self.script_tracker = None
+        self.script_words = 0                       # words in the script, for the desired pace
+        self.target_seconds = None                  # time the user has to present (None = not set)
         self.reset()
 
     def apply_settings(self, rules):
@@ -76,6 +81,7 @@ class AudioAnalyzer:
     def set_script(self, text):
         """The user's script (None / empty = no script, comparison off) -> script_loaded message."""
         self.script_chunks = chunk_script(text) if text and text.strip() else []
+        self.script_words = len(spoken_words(text)) if self.script_chunks else 0
         self.script_tracker = None
         self._build_tracker()
         return self.script_loaded_message()
@@ -241,6 +247,8 @@ class AudioAnalyzer:
         self.speech_pos -= done
 
         self.check_pace()
+        if new_sentences:
+            self.check_average_pace()
         if transcript_changed:
             out.append(self.transcript_message(new_sentences, new_fillers))
         if self.script_chunks:
@@ -316,6 +324,54 @@ class AudioAnalyzer:
         """Fast Vosk-partial estimate for the overlay; None while the speaker is paused."""
         return self.transcriber.live_wpm()
 
+    def set_target_time(self, seconds):
+        """The time the user has to present (None / 0 = not set) -> pace_target message."""
+        try:
+            self.target_seconds = float(seconds) if seconds and float(seconds) > 0 else None
+        except (TypeError, ValueError):
+            self.target_seconds = None
+        return self.pace_target_message()
+
+    def desired_wpm(self):
+        """The pace to aim for: script words / the time the user has, when both were given;
+        otherwise the Live alerts Target pace slider (default 140)."""
+        if self.script_words and self.target_seconds:
+            lo, hi = DESIRED_WPM_LIMITS
+            return round(min(hi, max(lo, self.script_words * 60 / self.target_seconds)), 1)
+        return self.pace_target_wpm()
+
+    def desired_source(self):
+        return "script" if self.script_words and self.target_seconds else "setting"
+
+    def pace_target_message(self):
+        return {"type": "pace_target", "desired_wpm": self.desired_wpm(), "source": self.desired_source(),
+                "script_words": self.script_words, "target_seconds": self.target_seconds}
+
+    def average_wpm(self):
+        """Words in the last AVERAGE_LINES finished lines / the time from the first one's start to
+        the last one's end, so the pauses between them count. None until there are enough lines."""
+        lines = self.transcriber.lines[-AVERAGE_LINES:]
+        if len(lines) < AVERAGE_LINES:
+            return None
+        span = lines[-1][1] - lines[0][0]
+        if span < 2:
+            return None
+        return round(sum(words for _, _, words in lines) * 60 / span, 1)
+
+    def check_average_pace(self):
+        """When a line finishes: "Falling behind" / "Too fast" if the average is more than the
+        pace_avg threshold (a percentage) off the desired pace."""
+        average = self.average_wpm()
+        if average is None:
+            return
+        threshold = self.settings.get("pace_avg", {}).get("threshold")
+        tolerance = AVERAGE_PACE_TOLERANCE if threshold is None else float(threshold) / 100
+        desired = self.desired_wpm()
+        if average < desired * (1 - tolerance):
+            self.post_rule("pace_avg", "Falling behind: speed up")
+        elif average > desired * (1 + tolerance):
+            self.post_rule("pace_avg", "Too fast: slow down")
+
     def pace_target_wpm(self):
         """Preferred WPM from the shared settings, with a safe default."""
         target = self.settings.get("pace", {}).get("threshold", 140)
@@ -338,10 +394,10 @@ class AudioAnalyzer:
             if summary is None:
                 return
             pace = summary["average_wpm"]
-        target = self.pace_target_wpm()
-        if pace < target - PACE_COMFORT_BAND_WPM:
+        target = self.desired_wpm()
+        if pace < target * (1 - LIVE_PACE_TOLERANCE):
             self.post_rule("pace", "Pick up the pace")
-        elif pace > target + PACE_COMFORT_BAND_WPM:
+        elif pace > target * (1 + LIVE_PACE_TOLERANCE):
             self.post_rule("pace", "Slow down")
 
     def _recording_clock(self, sample):
@@ -416,4 +472,7 @@ class AudioAnalyzer:
             "fillers": fillers,
             "total": sum(fillers.values()),
             "wpm": self.live_wpm(),                 # recent rate incl. the line still being spoken
+            "avg_wpm": self.average_wpm(),          # last 3 finished lines, pauses included
+            "desired_wpm": self.desired_wpm(),
+            "desired_source": self.desired_source(),
         }

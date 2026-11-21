@@ -71,7 +71,8 @@ It makes the service slower to start (several seconds to load).
 2. **Start practice.** Stay quiet during the 3 s "Get ready" countdown (it measures the room's
    silence). Then stand in your resting position with your face, shoulders and both hands in
    frame and hold still: calibration starts by itself once you're in frame and still, and takes
-   3 s. Posture and eye-level alerts are measured against it. Your typical pitch and volume are
+   3 s. The session (timer, recording, transcript, alerts, score) only starts once it's done.
+   Posture and eye-level alerts are measured against it. Your typical pitch and volume are
    learned as you talk (the last 10 s of speech).
 3. Present. Alerts pop up on the video; the pitch graph, transcript, filler counter and script
    progress update live.

@@ -78,19 +78,23 @@ def test_quiet_alert_posts_to_board(stt_model):
     assert "Speak up" in board.active()
 
 
-def test_repeated_fillers_cost_more():
+def test_fillers_are_scored_per_minute():
     voice = dict.fromkeys(VOICE_RULES, 0)
     body = dict.fromkeys(BODY_RULES, 0)
+    # 8 fillers in one minute is at the "bad" rate (8/min): the full 6 filler points are lost.
+    # Pace and volume weren't measured, so the 20 measured points are scaled to the 28-point rubric.
     result = score_presentation(filler_counts={"um": 8, "filler?": 5},
-                                voice_incidents=voice, body_incidents=body)
-    # Pace and volume were not available, so the existing checks are normalized to the
-    # full 28-point rubric while measured_points reports what was assessed.
+                                voice_incidents=voice, body_incidents=body, duration_seconds=60)
     assert result["max_score"] == 28
     assert result["measured_points"] == 20
-    assert result["score"] == 21
+    assert result["categories"]["filler"]["deduction"] == 6
+    assert result["score"] == pytest.approx(28 * 14 / 20)
     assert result["categories"]["voice_tone"]["max_points"] == 3
     assert result["categories"]["body_language"]["max_points"] == 11
-    assert score_presentation(filler_counts={"um": 100})["score"] == 0
+    # the same 8 fillers over 10 minutes is under the "good" rate: nothing lost
+    relaxed = score_presentation(filler_counts={"um": 8}, voice_incidents=voice, body_incidents=body,
+                                 duration_seconds=600)
+    assert relaxed["categories"]["filler"]["deduction"] == 0
 
 
 def test_pace_scores_moderate_delivery_and_consistency():
@@ -418,3 +422,85 @@ def test_analyzer_volume_summary_from_speech(stt_model):
     assert s["room_dbfs"] == -64.0 and len(s["segment_dbfs"]) == 2
     assert s["segment_dbfs"][0] - s["segment_dbfs"][1] > 10
     assert a.voice_incidents["pause"] >= 1                    # the 10 s silence after speaking
+
+
+def test_finished_lines_are_recorded_for_the_average_pace(stt_model, tmp_path):
+    a = AudioAnalyzer(stt_model, AlertBoard())
+    feed_all(a, say("Good afternoon everyone. Thank you for coming today.", tmp_path))
+    feed_all(a, np.zeros(SR * 2, dtype=np.float32))
+    a.finish()
+    lines = a.transcriber.lines
+    assert lines and all(end > start for start, end, _ in lines)
+    assert sum(words for _, _, words in lines) == len(a.transcriber.word_times)
+
+
+def test_average_wpm_counts_the_pauses_between_the_last_three_lines(stt_model):
+    a = AudioAnalyzer(stt_model, AlertBoard())
+    a.transcriber.lines = [(0, 4, 10), (5, 9, 10)]
+    assert a.average_wpm() is None                          # needs 3 lines
+    a.transcriber.lines.append((10, 14, 10))
+    assert a.average_wpm() == pytest.approx(30 * 60 / 14, abs=0.1)
+    a.transcriber.lines.append((30, 34, 10))                # only the last 3 count
+    assert a.average_wpm() == pytest.approx(30 * 60 / 29, abs=0.1)
+
+
+def test_desired_pace_from_script_and_time_else_the_slider(stt_model):
+    a = AudioAnalyzer(stt_model, AlertBoard())
+    assert a.desired_wpm() == 140 and a.desired_source() == "setting"
+    a.set_target_time(600)                                  # time but no script: still the slider
+    assert a.desired_wpm() == 140
+    a.set_script(" ".join(["word"] * 1300))
+    msg = a.pace_target_message()
+    assert msg["desired_wpm"] == 130 and msg["source"] == "script" and msg["script_words"] == 1300
+    a.set_target_time(None)
+    a.apply_settings({"pace": {"enabled": True, "threshold": 160, "duration": 0, "cooldown": 5}})
+    assert a.desired_wpm() == 160 and a.desired_source() == "setting"
+
+
+@pytest.mark.parametrize(("words_per_line", "expected"), [
+    (5, ["Falling behind: speed up"]),   # 15 words / 9 s = 100 WPM: 23% under 130
+    (7, []),                             # 140 WPM: within 15%
+    (8, ["Too fast: slow down"]),        # 160 WPM: 23% over
+])
+def test_average_pace_alert_both_ways(stt_model, words_per_line, expected):
+    board = PostedBoard()
+    a = AudioAnalyzer(stt_model, board)
+    a.set_script(" ".join(["word"] * 1300))
+    a.set_target_time(600)                                  # desired 130 WPM
+    a.transcriber.lines = [(0, 2, words_per_line), (3.5, 5.5, words_per_line), (7, 9, words_per_line)]
+    a.check_average_pace()
+    assert board.posted == expected
+
+
+def test_average_pace_alert_tolerance_cooldown_and_off_switch(stt_model):
+    board = PostedBoard()
+    a = AudioAnalyzer(stt_model, board)
+    a.set_script(" ".join(["word"] * 1300))
+    a.set_target_time(600)                                  # desired 130 WPM
+    a.transcriber.lines = [(0, 2, 6), (3.5, 5.5, 6), (7, 9, 6)]     # 18 words / 9 s = 120 WPM
+    a.check_average_pace()
+    assert board.posted == []                               # within 15%
+    a.transcriber.lines = [(0, 2, 5), (3.5, 5.5, 5), (7, 9, 5)]     # 100 WPM
+    a.apply_settings({"pace_avg": {"enabled": True, "threshold": 30, "duration": 0, "cooldown": 15}})
+    a.check_average_pace()
+    assert board.posted == []                               # 23% under, but the slider allows 30%
+    a.apply_settings({"pace_avg": {"enabled": True, "threshold": 15, "duration": 0, "cooldown": 15}})
+    a.check_average_pace()
+    a.check_average_pace()
+    assert board.posted == ["Falling behind: speed up"]     # once: cooldown
+    board.posted.clear()
+    a.last_alert.clear()
+    a.apply_settings({"pace_avg": {"enabled": False, "threshold": 15, "duration": 0, "cooldown": 0}})
+    a.check_average_pace()
+    assert board.posted == []
+
+
+def test_live_pace_alert_uses_the_desired_pace(stt_model):
+    board = PostedBoard()
+    a = AudioAnalyzer(stt_model, board)
+    a.set_script(" ".join(["word"] * 2000))
+    a.set_target_time(600)                                  # desired 200 WPM
+    # ~130 WPM of timed words: fine against the 140 slider, but more than 30% under 200
+    a.transcriber.word_times = [(i * 0.46, i * 0.46 + 0.1) for i in range(40)]
+    a.check_pace()
+    assert "Pick up the pace" in board.posted

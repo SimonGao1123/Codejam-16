@@ -45,6 +45,17 @@ it, fixed levels are used (pitch ignored below -60 dBFS, anything under -45 dBFS
 Sent when the connection opens, when the script changes (once typing pauses), and before
 `session_start` if it changed. The service keeps it across sessions until it changes.
 
+```json
+{"type": "target_time", "seconds": 600 | null}   // the time the user has to present; null = not set
+```
+
+Sent when the connection opens and whenever the Script card's "Time you have" field changes; kept
+across sessions. It sets the **desired pace**: with a script, script words × 60 / `seconds`
+(clamped to 40–250 WPM); without a script (or without a time), the Live alerts **Target pace**
+slider (default 140). The live pace alert, the average pace alert and the final pace score all use
+it, and it's also passed to the scorer as the expected length. Both `script` and `target_time` get
+a `pace_target` reply.
+
 There's no voice calibration: the typical pitch and volume are always the median of the last
 **10 s of speech** (pauses don't count, so a silence doesn't reset it), after the first second.
 The only voice-side measurement at session start is the room's silence level (`noise_floor`).
@@ -55,7 +66,7 @@ The app sends both controls for camera-only practice too. Raw audio is optional.
 
 ### `session_score`: after the final transcript
 
-Contains `score` (out of `max_score`, currently 24, or null without measured data),
+Contains `score` (out of `max_score`, currently 28, or null without measured data),
 `measured_points` (the available portion of the rubric), `categories` (filler, voice tone, speaking
 pace, and body language breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
 with a `category`, `label`, and `at` in seconds from recording start). Voice incidents come from the existing voice detector.
@@ -64,8 +75,7 @@ Hiding live banners does not turn off scoring.
 
 Speaking pace is measured from final transcript word timings. Its four points are split equally
 between a moderate average pace and consistency across roughly 20-word samples. The default target
-is 140 WPM (full pace credit from 100–180 WPM); users can customize that target under **Speaking
-pace** in Alert and scoring settings. Sessions with fewer than 20 recognized words or less
+is the desired pace (see `target_time`; 140 WPM by default, full pace credit within 40 WPM of it). Sessions with fewer than 20 recognized words or less
 than eight seconds of active speech leave pace unmeasured.
 
 ### `voice`: every 100 ms
@@ -94,7 +104,10 @@ alerts pitch threshold, in semitones).
   "new_fillers": ["um"],
   "fillers": {"um": 1, "uh": 0, "like": 0, "you know": 0, "so": 1, "filler?": 0},
   "total": 2,
-  "wpm": 138.4
+  "wpm": 138.4,
+  "avg_wpm": 131.0,
+  "desired_wpm": 145.0,
+  "desired_source": "script"
 }
 ```
 
@@ -104,7 +117,17 @@ alerts pitch threshold, in semitones).
 | `partial` | Words of the sentence still being spoken; **replaces** the previous partial |
 | `new_fillers` | Fillers detected since the last message (Electron flashes the counter) |
 | `fillers`, `total` | Running counts for the session, including fillers already heard in the current partial |
-| `wpm` | Recent words per minute; Vosk partial words make this responsive during a phrase, and it is `null` while the speaker pauses |
+| `wpm` | Live words per minute (last few seconds, including the line still being spoken); `null` while the speaker pauses |
+| `avg_wpm` | Average of the last 3 finished lines (each ends at a pause): their words × 60 / the time from the first one's start to the last one's end, so the pauses between them count. `null` until there are 3 lines |
+| `desired_wpm`, `desired_source` | The pace to aim for; `script` = script words / the time the user has, `setting` = the Target pace slider |
+
+### `pace_target`: reply to `script` and `target_time`
+
+```json
+{"type": "pace_target", "desired_wpm": 130.0, "source": "script", "script_words": 1300, "target_seconds": 600}
+```
+
+The Script card shows it before the session ("Desired pace: 130 WPM (1,300 words in 10 min)").
 
 Filler markers inside sentences: `[um]` / `[uh]` = detected and confirmed by Whisper; `[um?]` =
 sounded like a filler but Whisper wasn't available to confirm (counted as `filler?`).
@@ -156,10 +179,16 @@ The audio side posts alerts that the webcam side adds to its `alerts` banners fo
 `Filler: um` (etc.) each time a filler is detected. The current voice reading also appears as a
 status line (`voice: 182 Hz  -31 dBFS`).
 
-Once enough transcript has accumulated to make a reliable estimate, the `pace` rule also posts
-`Pick up the pace` below the configured target band and `Slow down` above it. Its **Target pace**
-slider defaults to 140 WPM, with a 40 WPM comfortable band on either side; the cooldown prevents
-the same cue from repeatedly interrupting the presentation.
+Two pace alerts, both against the desired pace (see `target_time`):
+
+- **Live pace** (rule `pace`): the live WPM of the last 5 s more than **30%** below / above the
+  desired pace → `Pick up the pace` / `Slow down`. Its threshold slider is the **Target pace**
+  (the desired pace when there's no script + time).
+- **Average pace** (rule `pace_avg`): checked when a line finishes; `avg_wpm` more than the rule's
+  threshold (default **15%**, slider 5–40%) below / above the desired pace →
+  `Falling behind: speed up` / `Too fast: slow down`.
+
+Their cooldowns stop the same cue from repeatedly interrupting the presentation.
 
 ## How the transcript and fillers work
 

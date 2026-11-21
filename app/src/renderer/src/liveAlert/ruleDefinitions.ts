@@ -34,9 +34,11 @@ export const rules = [
     cooldown: 3
   },
   {
+    // live WPM (last 5 s) more than 30% off the desired pace (script words / your time, or this
+    // target when there's no script / time)
     id: 'pace',
     group: 'Voice',
-    name: 'Speaking pace',
+    name: 'Live pace',
     cue: 'Pick up the pace',
     unit: 'words per minute',
     min: 80,
@@ -46,6 +48,22 @@ export const rules = [
     cooldown: 5,
     instant: true,
     label: 'Target pace'
+  },
+  {
+    // average WPM of the last 3 finished lines (pauses included) vs the desired pace; checked when
+    // a line finishes. Also "Too fast: slow down" when it's that far above.
+    id: 'pace_avg',
+    group: 'Voice',
+    name: 'Average pace',
+    cue: 'Falling behind: speed up',
+    unit: '% off desired pace',
+    min: 5,
+    max: 40,
+    value: 15,
+    duration: 0,
+    cooldown: 15,
+    instant: true,
+    label: 'Allowed difference'
   },
   {
     id: 'pitch',

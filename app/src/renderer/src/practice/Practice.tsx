@@ -11,14 +11,14 @@ import TranscriptPanel from './components/TranscriptPanel'
 import { usePracticeSession } from './usePracticeSession'
 
 export default function Practice(): React.JSX.Element {
-  const session = usePracticeSession()
+  // this session's posture calibration has finished; with the camera on, the session starts after it
+  const [calibrated, setCalibrated] = useState(false)
+  const session = usePracticeSession(calibrated)
   const [score, setScore] = useState<SessionScoreMessage | null>(null)
   const { running, finished, camera, microphone, cameraStream, micStream, pending } = session
   const [script, setScript] = useState('') // optional; empty = no script tracking
-  // with the camera on, a session only counts once calibration has finished: stopping before that
-  // gives no score and deletes the recording
-  const [calibrated, setCalibrated] = useState(false)
-  const speech = useAudioAnalysis(micStream, script, session.startedAt, setScore)
+  const [targetMinutes, setTargetMinutes] = useState<number | null>(null) // time the user has
+  const speech = useAudioAnalysis(micStream, script, targetMinutes, session.startedAt, setScore)
 
   return (
     <main className="ph-practice">
@@ -40,6 +40,8 @@ export default function Practice(): React.JSX.Element {
           logWebcam={session.logWebcam}
           wpm={speech.wpm}
           wpmUpdatedAt={speech.wpmUpdatedAt}
+          avgWpm={speech.avgWpm}
+          desiredWpm={speech.desiredWpm}
           onCalibrated={setCalibrated}
         >
           <MicrophoneMeter micStream={micStream} pending={pending && microphone} />
@@ -60,15 +62,19 @@ export default function Practice(): React.JSX.Element {
             setScore(null)
             return session.startPractice()
           }}
-          endPractice={() => session.endPractice(Boolean(cameraStream) && !calibrated)}
+          endPractice={session.endPractice}
+          waitingForCalibration={session.waitingForCalibration}
+          cancelPractice={session.cancelPractice}
         />
       </div>
-      <ScriptPanel script={script} setScript={setScript} running={running} speech={speech} />
-      {session.discarded && (
-        <p className="ph-notice" role="status">
-          You stopped before calibration finished, so this session wasn&apos;t scored or recorded.
-        </p>
-      )}
+      <ScriptPanel
+        script={script}
+        setScript={setScript}
+        running={running}
+        speech={speech}
+        targetMinutes={targetMinutes}
+        setTargetMinutes={setTargetMinutes}
+      />
       {session.recordingError && (
         <p className="ph-error" role="status">
           {session.recordingError}
@@ -81,7 +87,7 @@ export default function Practice(): React.JSX.Element {
           checkpoints={score?.checkpoints ?? []}
         />
       )}
-      {finished && score && !session.discarded && <SessionResults result={score} />}
+      {finished && score && <SessionResults result={score} />}
       <TranscriptPanel speech={speech} running={running} />
     </main>
   )
