@@ -122,7 +122,9 @@ calibration status), and voice / filler alerts in `alerts` (see `audio-protocol.
 
 ## Recordings
 
-The Record button on the Practice page (under the camera preview) saves `~/Movies/Presentation Helper/<time>.webm` (webcam video + mic track) and
-`<time>.jsonl`. The first line of the `.jsonl` is `{"type": "recording", "t": ..., "video": ...}`,
+Practice records automatically after the countdown. Stop presenting finishes the WebM and makes it
+available for playback. In development, the WebM and matching JSONL log are saved to
+`app/temp/recordings/` with a shared ID. Packaged builds use the app's user data directory.
+The first line of the `.jsonl` is `{"type": "recording", "t": ..., "video": ...}`,
 giving the frame clock time when the video started. Every following line is a message exactly as
 sent to the service, so feeding the lines to the service in order replays the session.

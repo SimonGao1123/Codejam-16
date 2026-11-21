@@ -25,12 +25,15 @@ export class AudioAnalysisClient {
     return this.ws?.readyState === WebSocket.OPEN
   }
 
-  /** Raw 16 kHz float32 samples. Returns false if dropped (not connected, or Python is behind). */
-  sendAudio(samples: Float32Array): boolean {
+  /** Timestamp followed by 16 kHz float32 samples. Returns false if dropped. */
+  sendAudio(samples: Float32Array, startedAt: number): boolean {
     const ws = this.ws
     if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > MAX_BUFFERED_BYTES)
       return false
-    ws.send(samples)
+    const frame = new ArrayBuffer(Float64Array.BYTES_PER_ELEMENT + samples.byteLength)
+    new DataView(frame).setFloat64(0, startedAt, true)
+    new Float32Array(frame, Float64Array.BYTES_PER_ELEMENT).set(samples)
+    ws.send(frame)
     return true
   }
 

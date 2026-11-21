@@ -75,22 +75,26 @@ class Transcriber:
         self.base = 0                         # absolute frame number of voiced[0] / audio[0]
         self.sentences = []                   # every finished sentence, as text
         self.totals = {f: 0 for f in FILLERS} | {"filler?": 0}
+        self.filler_checkpoints = []
         self.alerted = {f: 0 for f in FILLERS}    # fillers already alerted from this phrase's partials
         self.last_partial = ""
 
     # ---------- helpers ----------
     def longest_voiced_run(self, start_t, end_t):
-        """Longest stretch of consecutive 'speech' frames between two times (seconds)."""
+        """Return the start time and duration of the longest voiced stretch."""
         a = max(int(start_t / FRAME_SEC), self.base)
         b = min(int(end_t / FRAME_SEC), self.base + len(self.voiced))
         best = cur = 0
+        best_start = a
         for i in range(a, b):
             if self.voiced[i - self.base]:
                 cur += 1
-                best = max(best, cur)
+                if cur > best:
+                    best = cur
+                    best_start = i - cur + 1
             else:
                 cur = 0
-        return best * FRAME_SEC
+        return max(start_t, best_start * FRAME_SEC), best * FRAME_SEC
 
     def get_clip(self, start_t, end_t, pad=0.1):
         """Cut the sound between two times out of the audio history (floats Whisper accepts)."""
@@ -159,15 +163,21 @@ class Transcriber:
             self.alerted[w] = 0
 
         tokens = []                                   # this sentence, word by word
-        for w in res.get("result", []):
+        words = res.get("result", [])
+        for index, w in enumerate(words):
+            label = w["word"]
+            if label == "you" and index + 1 < len(words) and words[index + 1]["word"] == "know":
+                label = "you know"
+            if label in FILLERS:
+                self.filler_checkpoints.append((w["start"], label))
             # ----- check 1: a gap where Vosk heard nothing but the VAD hears voice -----
             gap = w["start"] - self.prev_end
             if gap >= MIN_GAP:
-                run = self.longest_voiced_run(self.prev_end, w["start"])
+                run_start, run = self.longest_voiced_run(self.prev_end, w["start"])
                 label = self.classify(self.prev_end, w["start"]) if run >= MIN_RUN else None
                 log.debug("gap %.2fs before %r, voiced run %.2fs -> %s", gap, w["word"], run, label)
                 if label:
-                    events += self.mark_filler(label, tokens)
+                    events += self.mark_filler(label, tokens, run_start)
 
             # ----- check 2: a long "a"/"im" that is really an um/uh -----
             dur = w["end"] - w["start"]
@@ -176,7 +186,7 @@ class Transcriber:
                 label = self.classify(w["start"], w["end"])
                 log.debug("suspect %r dur %.2fs -> %s", w["word"], dur, label)
             if label:
-                events += self.mark_filler(label, tokens)      # replaces the wrong word
+                events += self.mark_filler(label, tokens, w["start"])  # replaces the wrong word
             else:
                 tokens.append(w["word"])                       # keep the word as Vosk heard it
             self.prev_end = w["end"]
@@ -187,8 +197,10 @@ class Transcriber:
             events.append(("sentence", text))
         return events
 
-    def mark_filler(self, label, tokens):
+    def mark_filler(self, label, tokens, start_t):
         self.totals[label] += 1
+        if label != "filler?":
+            self.filler_checkpoints.append((start_t, label))
         tokens.append("[um?]" if label == "filler?" else f"[{label}]")
         return [("filler", label)]
 

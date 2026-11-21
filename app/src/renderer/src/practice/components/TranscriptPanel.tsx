@@ -6,23 +6,26 @@ import { useEffect, useRef, useState } from 'react'
 
 import { AudioAnalysisClient } from '../audio/audioAnalysisClient'
 import { captureMic } from '../audio/audioCapture'
-import PitchGraph, { PITCH_WINDOW_S, type PitchSample } from './PitchGraph'
+import VoiceGraph, { VOICE_WINDOW_S, type VoiceSample } from './VoiceGraph'
 import {
   FILLER_WORDS,
   type FillerWord,
+  type SessionScoreMessage,
   type TranscriptMessage,
   type VoiceMessage
 } from '../audio/audioProtocol'
 
 type Props = {
   micStream: MediaStream | null
-  running: boolean
+  startedAt: number | null
+  onScore: (score: SessionScoreMessage) => void
 }
 
 const NO_FILLERS = Object.fromEntries(FILLER_WORDS.map((w) => [w, 0])) as Record<FillerWord, number>
 const FLASH_MS = 1500 // how long a filler chip stays highlighted after it's counted
 
-export default function TranscriptPanel({ micStream, running }: Props): React.JSX.Element {
+export default function TranscriptPanel({ micStream, startedAt, onScore }: Props): React.JSX.Element {
+  const running = startedAt !== null
   const clientRef = useRef<AudioAnalysisClient | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
@@ -32,24 +35,38 @@ export default function TranscriptPanel({ micStream, running }: Props): React.JS
   const [total, setTotal] = useState(0)
   const [flash, setFlash] = useState<Partial<Record<FillerWord, number>>>({})
   const [voice, setVoice] = useState<VoiceMessage | null>(null)
-  const pitchRef = useRef<PitchSample[]>([]) // last PITCH_WINDOW_S of readings, for the graph
+  const sessionNumber = useRef(0)
+  const pendingScores = useRef<number[]>([])
+  const pitchRef = useRef<VoiceSample[]>([])
+  const volumeRef = useRef<VoiceSample[]>([])
 
   // connection to the Python service: for as long as the practice page is open
   useEffect(() => {
     const client = new AudioAnalysisClient()
     clientRef.current = client
-    client.onConnectionChange = setConnected
+    client.onConnectionChange = (online) => {
+      if (!online) pendingScores.current = []
+      setConnected(online)
+    }
     client.onMessage = (msg) => {
       if (msg.type === 'voice') {
         setVoice(msg)
         const now = performance.now() / 1000
         const samples = pitchRef.current
         // one reading per 50 ms block; the newest is "now"
-        msg.pitches.forEach((hz, i) =>
-          samples.push({ t: now - (msg.pitches.length - 1 - i) * 0.05, hz })
+        msg.pitches.forEach((value, i) =>
+          samples.push({ t: now - (msg.pitches.length - 1 - i) * 0.05, value })
         )
-        while (samples.length && samples[0].t < now - PITCH_WINDOW_S - 1) samples.shift()
-      } else applyTranscript(msg)
+        const volumeTime = msg.captured_at ?? now
+        const volumes = volumeRef.current
+        volumes.push({ t: volumeTime, value: msg.volume_dbfs })
+        while (samples.length && samples[0].t < now - VOICE_WINDOW_S - 1) samples.shift()
+        while (volumes.length && volumes[0].t < volumeTime - VOICE_WINDOW_S - 1) volumes.shift()
+      } else if (msg.type === 'transcript') {
+        applyTranscript(msg)
+      } else if (pendingScores.current.shift() === sessionNumber.current) {
+        onScore(msg)
+      }
     }
     function applyTranscript(msg: TranscriptMessage): void {
       if (msg.new_sentences.length) setSentences((s) => [...s, ...msg.new_sentences])
@@ -65,31 +82,43 @@ export default function TranscriptPanel({ micStream, running }: Props): React.JS
       client.close()
       clientRef.current = null
     }
-  }, [])
+  }, [onScore])
 
-  // stream the mic while the session has one; a new session starts a fresh transcript
+  // Session controls also run for camera-only practice.
   useEffect(() => {
     const client = clientRef.current
-    if (!micStream || !client) return
-    let stopped = false
-    let capture: { stop(): void } | null = null
+    if (startedAt === null) return
+    const number = ++sessionNumber.current
+    if (!connected || !client) return
     setSentences([])
     setPartial('')
     setFillers(NO_FILLERS)
     setTotal(0)
     setVoice(null)
     pitchRef.current = []
-    client.send({ type: 'session_start' })
-    captureMic(micStream, (samples) => client.sendAudio(samples)).then(
+    volumeRef.current = []
+    client.send({ type: 'session_start', started_at: startedAt })
+    return () => {
+      if (!client.connected) return
+      pendingScores.current.push(number)
+      client.send({ type: 'session_end' })
+    }
+  }, [startedAt, connected])
+
+  useEffect(() => {
+    const client = clientRef.current
+    if (!running || !connected || !micStream || !client) return
+    let stopped = false
+    let capture: { stop(): void } | null = null
+    captureMic(micStream, (samples, startedAt) => client.sendAudio(samples, startedAt)).then(
       (c) => (stopped ? c.stop() : (capture = c)),
       (err) => console.error('microphone capture failed', err)
     )
     return () => {
       stopped = true
       capture?.stop()
-      client.send({ type: 'session_end' })
     }
-  }, [micStream])
+  }, [running, connected, micStream])
 
   // keep the newest words in view
   useEffect(() => {
@@ -104,7 +133,7 @@ export default function TranscriptPanel({ micStream, running }: Props): React.JS
     return () => window.clearTimeout(timer)
   }, [flash])
 
-  const listening = Boolean(micStream) && connected
+  const listening = running && Boolean(micStream) && connected
   const empty = !sentences.length && !partial
 
   return (
@@ -122,13 +151,21 @@ export default function TranscriptPanel({ micStream, running }: Props): React.JS
                 : 'Starts with your practice session'}
           </span>
         </div>
-        <PitchGraph
+        <VoiceGraph
+          metric="pitch"
           samples={pitchRef}
           typicalHz={voice?.typical_hz ?? null}
           spikeHz={voice?.spike_hz ?? null}
           calibrated={voice?.calibrated ?? false}
           live={listening}
         />
+      </section>
+      <section className="ph-pitch" aria-labelledby="ph-volume-heading">
+        <div className="ph-card-head">
+          <h2 id="ph-volume-heading">Microphone volume</h2>
+          {voice && <span>{voice.volume_dbfs.toFixed(0)} dBFS</span>}
+        </div>
+        <VoiceGraph metric="volume" samples={volumeRef} live={listening} />
       </section>
       <section className="ph-transcript" aria-labelledby="ph-transcript-heading">
         <div className="ph-card-head">

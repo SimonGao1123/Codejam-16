@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { WebcamRecorder } from './camera/webcamRecorder'
+import type { ClientMessage } from './camera/webcamProtocol'
+
+const COUNTDOWN_SECONDS = 3
 
 export function usePracticeSession() {
   const [camera, setCamera] = useState(true)
@@ -7,12 +11,20 @@ export function usePracticeSession() {
   const [seconds, setSeconds] = useState(0)
   const [finished, setFinished] = useState(false)
   const [pending, setPending] = useState(false)
+  const [countdown, setCountdown] = useState<number | null>(null)
+  const [starting, setStarting] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [playbackUrl, setPlaybackUrl] = useState<string | null>(null)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const [recordingError, setRecordingError] = useState('')
   const [deviceError, setDeviceError] = useState('')
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null)
   const [micStream, setMicStream] = useState<MediaStream | null>(null)
   const streams = useRef<MediaStream[]>([])
   const generation = useRef(0)
+  const recording = useRef<{ recorder: WebcamRecorder; start: Promise<number> } | null>(null)
   const running = started !== null
+  const preparing = pending || countdown !== null || starting
 
   const releaseDevices = useCallback(() => {
     generation.current += 1
@@ -21,7 +33,50 @@ export function usePracticeSession() {
       .forEach((stream) => stream.getTracks().forEach((track) => track.stop()))
   }, [])
 
-  useEffect(() => releaseDevices, [releaseDevices])
+  useEffect(() => {
+    return () => {
+      const current = recording.current
+      recording.current = null
+      if (current) {
+        void current.start.then(() => current.recorder.stop()).catch(console.error)
+      }
+      releaseDevices()
+    }
+  }, [releaseDevices])
+
+  const beginPresenting = useEffectEvent(async () => {
+    const request = generation.current
+    const tracks = streams.current.flatMap((stream) => stream.getTracks())
+    let startedAt: number | undefined
+    setStarting(true)
+    setCountdown(null)
+    if (tracks.length) {
+      const recorder = new WebcamRecorder()
+      const start = recorder.start(new MediaStream(tracks))
+      recording.current = { recorder, start }
+      try {
+        startedAt = await start
+      } catch (error) {
+        if (generation.current === request) {
+          recording.current = null
+          setRecordingError('Could not start the recording.')
+          console.error(error)
+        }
+      }
+    }
+    if (generation.current !== request) return
+    setStarted(startedAt === undefined ? performance.now() : startedAt * 1000)
+    setStarting(false)
+  })
+
+  useEffect(() => {
+    if (countdown === null) return
+    const timer = window.setTimeout(() => {
+      if (countdown > 1) setCountdown(countdown - 1)
+      else void beginPresenting()
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [countdown])
 
   useEffect(() => {
     if (started === null) return
@@ -33,12 +88,15 @@ export function usePracticeSession() {
   }, [started])
 
   async function startPractice(): Promise<void> {
+    if (preparing || running || saving) return
     const request = ++generation.current
-    setStarted(performance.now())
     setSeconds(0)
     setFinished(false)
     setDeviceError('')
-    setPending(camera || microphone)
+    setRecordingError('')
+    setPlaybackUrl(null)
+    setRecordingDuration(0)
+    setPending(true)
 
     const devices = [
       {
@@ -78,10 +136,17 @@ export function usePracticeSession() {
     const unavailable = errors.filter(Boolean)
     if (unavailable.length)
       setDeviceError(`${unavailable.join(' and ')} unavailable. Check your device permissions.`)
+    setCountdown(COUNTDOWN_SECONDS)
   }
 
   function endPractice(): void {
-    if (started !== null) setSeconds(Math.floor((performance.now() - started) / 1000))
+    if (started === null) return
+    const duration = (performance.now() - started) / 1000
+    setSeconds(Math.floor(duration))
+    setRecordingDuration(duration)
+    const current = recording.current
+    recording.current = null
+    const saved = current?.recorder.stop()
     releaseDevices()
     setCameraStream(null)
     setMicStream(null)
@@ -89,7 +154,26 @@ export function usePracticeSession() {
     setDeviceError('')
     setStarted(null)
     setFinished(true)
+    if (saved) {
+      const request = generation.current
+      setSaving(true)
+      void saved
+        .then((paths) => {
+          if (generation.current === request) setPlaybackUrl(paths?.playbackUrl ?? null)
+        })
+        .catch((error) => {
+          console.error(error)
+          if (generation.current === request) setRecordingError('Could not save the recording.')
+        })
+        .finally(() => {
+          if (generation.current === request) setSaving(false)
+        })
+    }
   }
+
+  const logWebcam = useCallback((message: ClientMessage) => {
+    recording.current?.recorder.log(message)
+  }, [])
 
   return {
     camera,
@@ -97,9 +181,17 @@ export function usePracticeSession() {
     microphone,
     setMicrophone,
     running,
+    startedAt: started === null ? null : started / 1000,
     seconds,
     finished,
     pending,
+    preparing,
+    countdown,
+    saving,
+    playbackUrl,
+    recordingDuration,
+    recordingError,
+    logWebcam,
     deviceError,
     cameraStream,
     micStream,

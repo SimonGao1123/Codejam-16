@@ -11,6 +11,8 @@ also calibrates the voice, and voice / filler alerts show up as banners on the w
 import asyncio
 import json
 import logging
+import math
+import struct
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +22,7 @@ import numpy as np
 from websockets.asyncio.server import serve
 
 from .audio_analysis import AudioAnalyzer
+from .scoring import score_presentation
 from .transcript import load_vosk, load_whisper
 from .webcam_analysis import WebcamAnalyzer
 
@@ -28,6 +31,7 @@ log = logging.getLogger("presentation_service")
 REPO = Path(__file__).resolve().parents[2]
 VOSK_MODEL = REPO / "experiments" / "gap_heuristic" / "vosk-model-small-en-us-0.15"
 ALERT_SHOW_S = 2.5          # how long a voice / filler alert banner stays up
+AUDIO_TIMESTAMP = struct.Struct("<d")
 
 
 class AlertBoard:
@@ -53,6 +57,7 @@ class Session:
         self.alerts = AlertBoard()
         self.webcam = WebcamAnalyzer()
         self.audio = AudioAnalyzer(vosk_model, None, self.alerts)
+        self.scoring_client = None
         # audio work (Vosk, Whisper) runs on one worker thread, in order, off the event loop
         self.audio_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="audio")
 
@@ -89,20 +94,57 @@ async def audio_connection(ws, session):
     loop = asyncio.get_running_loop()
     run = lambda fn, *args: loop.run_in_executor(session.audio_worker, fn, *args)  # noqa: E731
     await run(session.audio.reset)
-    async for raw in ws:
-        if isinstance(raw, bytes):                   # float32 little-endian, 16 kHz mono
-            for msg in await run(session.audio.feed, np.frombuffer(raw, dtype="<f4")):
-                await ws.send(json.dumps(msg))
-            continue
-        msg = json.loads(raw)
-        if msg["type"] == "session_start":
-            await run(session.audio.reset)
-        elif msg["type"] == "session_end":
-            for out in await run(session.audio.finish):
-                await ws.send(json.dumps(out))
-        elif msg["type"] == "calibrate":
-            session.audio.request_calibration()
-    log.info("audio client disconnected")
+    started_at = None
+    try:
+        async for raw in ws:
+            if isinstance(raw, bytes):                   # float32 little-endian, 16 kHz mono
+                offset = AUDIO_TIMESTAMP.size if started_at is not None else 0
+                if len(raw) <= offset or (len(raw) - offset) % 4:
+                    continue
+                chunk_start = AUDIO_TIMESTAMP.unpack_from(raw)[0] if offset else None
+                if chunk_start is not None and not math.isfinite(chunk_start):
+                    continue
+                samples = np.frombuffer(raw, dtype="<f4", offset=offset)
+                for msg in await run(session.audio.feed, samples, chunk_start):
+                    await ws.send(json.dumps(msg))
+                continue
+            msg = json.loads(raw)
+            if msg["type"] == "session_start":
+                started_at = msg.get("started_at")
+                session.scoring_client = ws
+                session.webcam.start_scoring(started_at)
+                await run(session.audio.reset)
+            elif msg["type"] == "session_end" and session.scoring_client is ws:
+                session.scoring_client = None
+                session.webcam.scoring = False
+                body_incidents = session.webcam.incidents.copy()
+                body_checkpoints = session.webcam.checkpoints.copy()
+
+                def finish_and_score():
+                    transcript, = session.audio.finish()
+                    report = score_presentation(
+                        filler_counts=transcript["fillers"] if session.audio.has_speech_samples else None,
+                        voice_incidents=session.audio.voice_incidents,
+                        body_incidents=body_incidents,
+                    )
+                    checkpoints = []
+                    if started_at is not None:
+                        checkpoints = [
+                            {"at": round(when - started_at, 3), "category": category, "label": label}
+                            for when, category, label in sorted(body_checkpoints + session.audio.checkpoints())
+                            if when >= started_at
+                        ]
+                    return transcript, {"type": "session_score", **report, "checkpoints": checkpoints}
+
+                for out in await run(finish_and_score):
+                    await ws.send(json.dumps(out))
+            elif msg["type"] == "calibrate":
+                session.audio.request_calibration()
+    finally:
+        if session.scoring_client is ws:
+            session.scoring_client = None
+            session.webcam.scoring = False
+        log.info("audio client disconnected")
 
 
 async def main(host="127.0.0.1", port=8766, whisper_model="tiny.en"):

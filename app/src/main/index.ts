@@ -9,7 +9,8 @@ import { registerWebcamRecorderIpc } from './webcamRecorder'
 // The built UI is served from app://renderer/ instead of file://, because MediaPipe loads its
 // models and WebAssembly with fetch(), which Chromium doesn't allow for file:// URLs.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }
+  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: 'practice-recording', privileges: { standard: true, secure: true, stream: true } }
 ])
 
 function serveRenderer(): void {

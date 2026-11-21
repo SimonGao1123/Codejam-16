@@ -7,10 +7,10 @@ export interface MicCapture {
   stop(): void
 }
 
-/** Calls `onChunk` with ~128 ms of 16 kHz float32 audio at a time until stop(). */
+/** Emits ~128 ms of audio with the chunk start on the renderer's monotonic clock. */
 export async function captureMic(
   stream: MediaStream,
-  onChunk: (samples: Float32Array) => void
+  onChunk: (samples: Float32Array, startedAt: number) => void
 ): Promise<MicCapture> {
   const context = new AudioContext() // the mic's native rate, usually 48 kHz
   await context.audioWorklet.addModule(workletUrl)
@@ -21,7 +21,11 @@ export async function captureMic(
     channelCount: 1,
     channelCountMode: 'explicit' // mix stereo mics down to mono
   })
-  chunker.port.onmessage = (e: MessageEvent<Float32Array>) => onChunk(e.data)
+  let contextOrigin: number | null = null
+  chunker.port.onmessage = (e: MessageEvent<{ samples: Float32Array; startTime: number }>) => {
+    contextOrigin ??= performance.now() / 1000 - context.currentTime
+    onChunk(e.data.samples, contextOrigin + e.data.startTime)
+  }
   source.connect(chunker)
   return {
     stop() {

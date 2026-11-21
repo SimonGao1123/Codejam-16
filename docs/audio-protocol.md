@@ -13,20 +13,33 @@ filler-word detection, then sends back voice readings and transcript updates.
 
 ## Electron → Python
 
-**Audio**: binary messages of raw **float32 little-endian, mono, 16 kHz** samples, about 2048
-samples (128 ms) each. Electron downsamples from the mic's own rate in an audio worklet.
+**Audio**: binary messages with a little-endian float64 chunk-start timestamp followed by
+**float32 little-endian, mono, 16 kHz** samples, about 2048 samples (128 ms) each.
+Timestamps use the renderer's monotonic clock in seconds. Electron downsamples from the mic's
+own rate in an audio worklet. Clients that omit `started_at` send raw samples with no prefix.
 
 **Control** (JSON text):
 
 ```json
-{"type": "session_start"}    // new practice session: clear the transcript, counts and voice baseline
-{"type": "session_end"}      // session ended: finish the sentence still being spoken
+{"type": "session_start", "started_at": 12.3} // recording start on the renderer's monotonic clock
+{"type": "session_end"}      // finish the sentence still being spoken and return the session score
 ```
 
 Voice calibration has no message of its own: the webcam side's `calibrate` message (the Calibrate
 button) also starts voice calibration. Speak normally for 3 s (10 s timeout).
 
+The app sends both controls for camera-only practice too. Raw audio is optional.
+
 ## Python → Electron
+
+### `session_score`: after the final transcript
+
+Contains `score` (out of `max_score`, currently 20, or null without measured data),
+`measured_points` (the available portion of the rubric), `categories` (filler, voice tone, and
+body language breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
+with a `category`, `label`, and `at` in seconds from recording start). Voice incidents come from the existing voice detector.
+Webcam incidents use the configured hold durations and count each sustained condition once.
+Hiding live banners does not turn off scoring.
 
 ### `voice`: every 100 ms
 
@@ -36,7 +49,8 @@ button) also starts voice calibration. Speak normally for 3 s (10 s timeout).
  "calibrated": false, "calibrating": false, "message": ""}
 ```
 
-`pitch_hz` is the latest reading, `null` when the audio isn't voiced (silence, breath, s/t/k
+`captured_at` gives the latest reading's time on the renderer's monotonic clock, or `null`
+when audio arrives without timestamps. `pitch_hz` is the latest reading, `null` when the audio isn't voiced (silence, breath, s/t/k
 sounds). `pitches` holds every 50 ms reading since the last message, oldest first; the Voice pitch
 graph plots these. `typical_hz` is the calibrated pitch, or the running typical pitch before
 calibration (`null` for the first second of speech). `spike_hz` is where a pitch-spike alert fires

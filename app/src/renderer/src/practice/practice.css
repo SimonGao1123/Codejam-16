@@ -305,10 +305,6 @@
   background: #f6d58e;
   color: #33250d;
 }
-.ph-app .ph-webcam-bar button[data-recording='true'] {
-  background: #e65c5c;
-  color: #fff;
-}
 .ph-webcam-status {
   font-size: 13px;
   padding: 3px 10px;
@@ -320,17 +316,100 @@
   color: #b9f0b9;
   background: #1f3a24;
 }
-.ph-webcam-note {
-  color: #c4bfda;
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
+.ph-playback,
+.ph-results,
 .ph-pitch {
   margin-top: 18px;
   border: 1px solid #38334e;
   border-radius: 16px;
   background: #1e2030;
+}
+.ph-playback video {
+  display: block;
+  width: calc(100% - 32px);
+  max-height: 440px;
+  margin: 0 16px 16px;
+  border-radius: 10px;
+  background: #12121d;
+}
+.ph-playback:fullscreen {
+  margin: 0;
+  overflow: auto;
+}
+.ph-playback:fullscreen video {
+  max-height: 75vh;
+}
+.ph-playback-controls {
+  padding: 0 16px 16px;
+}
+.ph-playback-timeline {
+  padding: 0 8px;
+}
+.ph-playback-timeline input {
+  width: 100%;
+  margin: 0;
+}
+.ph-playback-markers {
+  position: relative;
+  height: 18px;
+}
+.ph-app button.ph-playback-marker {
+  position: absolute;
+  top: 0;
+  width: 12px;
+  height: 15px;
+  padding: 0;
+  border: 1px solid #1e2030;
+  border-radius: 4px;
+  background: #f6d58e;
+  transform: translateX(-50%);
+}
+.ph-app button.ph-playback-marker:hover,
+.ph-app button.ph-playback-marker:focus-visible {
+  background: #fff0c5;
+}
+.ph-playback-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ph-playback-buttons input {
+  width: 84px;
+}
+.ph-playback-checkpoints {
+  margin-top: 12px;
+}
+.ph-playback-checkpoints ul {
+  max-height: 180px;
+  overflow-y: auto;
+  padding-left: 20px;
+}
+.ph-results .ph-card-head strong {
+  color: #d8c9ff;
+  font-size: 26px;
+  font-variant-numeric: tabular-nums;
+}
+.ph-results-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 0 16px 16px;
+}
+.ph-results-breakdown dt {
+  color: #c4bfda;
+}
+.ph-results-breakdown dd {
+  margin: 4px 0 0;
+  font-weight: 700;
+}
+.ph-results p,
+.ph-results ul {
+  margin: 0 16px 16px;
+  color: #c4bfda;
+}
+.ph-results ul {
+  padding-left: 20px;
 }
 .ph-pitch-graph {
   display: block;

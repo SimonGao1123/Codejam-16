@@ -10,6 +10,7 @@ declare class AudioWorkletProcessor {
 }
 declare function registerProcessor(name: string, processor: typeof AudioWorkletProcessor): void
 declare const sampleRate: number // the context's (= the mic's) sample rate
+declare const currentTime: number
 
 const TARGET_RATE = 16000
 const CHUNK = 2048 // output samples per message (128 ms at 16 kHz)
@@ -32,7 +33,7 @@ class MicChunker extends AudioWorkletProcessor {
       this.count++
       this.pos++
       if (this.pos >= this.step) {
-        this.push(this.sum / this.count)
+        this.push(this.sum / this.count, currentTime + (i + 1) / sampleRate)
         this.pos -= this.step
         this.sum = 0
         this.count = 0
@@ -41,10 +42,13 @@ class MicChunker extends AudioWorkletProcessor {
     return true
   }
 
-  private push(sample: number): void {
+  private push(sample: number, endTime: number): void {
     this.buffer[this.filled++] = sample
     if (this.filled === CHUNK) {
-      this.port.postMessage(this.buffer, [this.buffer.buffer]) // transfer, don't copy
+      this.port.postMessage(
+        { samples: this.buffer, startTime: endTime - CHUNK / TARGET_RATE },
+        [this.buffer.buffer]
+      )
       this.buffer = new Float32Array(CHUNK)
       this.filled = 0
     }
