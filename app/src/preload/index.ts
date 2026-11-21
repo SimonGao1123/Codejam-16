@@ -1,8 +1,19 @@
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
 // APIs exposed to the renderer as window.api
-const api = {}
+const api = {
+  webcamRecorder: {
+    start: (): Promise<{ dir: string; base: string }> =>
+      ipcRenderer.invoke('webcam-recorder:start'),
+    chunk: (chunk: Uint8Array): void => ipcRenderer.send('webcam-recorder:chunk', chunk),
+    line: (line: string): void => ipcRenderer.send('webcam-recorder:line', line),
+    stop: (): Promise<{ video: string; data: string } | null> =>
+      ipcRenderer.invoke('webcam-recorder:stop')
+  }
+}
+
+export type Api = typeof api
 
 if (process.contextIsolated) {
   try {
