@@ -169,7 +169,7 @@ def build_paragraph(sentences):
 
 
 # ---------- setup ----------
-model = Model("vosk-model-small-en-us-0.15")
+model = Model("vosk-model-en-us-0.22")
 recognizer = KaldiRecognizer(model, SR)
 recognizer.SetWords(True)
 

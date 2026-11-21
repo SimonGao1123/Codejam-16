@@ -26,7 +26,7 @@ from .webcam_analysis import WebcamAnalyzer
 log = logging.getLogger("presentation_service")
 
 REPO = Path(__file__).resolve().parents[2]
-VOSK_MODEL = REPO / "experiments" / "gap_heuristic" / "vosk-model-small-en-us-0.15"
+VOSK_MODEL = REPO / "models" / "vosk-model-en-us-0.22"
 ALERT_SHOW_S = 2.5          # how long a voice / filler alert banner stays up
 
 
