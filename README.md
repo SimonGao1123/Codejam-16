@@ -68,9 +68,11 @@ It makes the service slower to start (several seconds to load).
 
 1. **Practice tab:** optionally paste your script or attach a PDF in the Script card (text PDFs
    only; scanned pages can't be read).
-2. **Start practice.** Click **Calibrate** (or press `c`): after a 2 s countdown, stand normally
-   with your hands at rest, look at the camera and say a few sentences. Posture and eye-level
-   alerts are measured against this.
+2. **Start practice.** Stay quiet during the 3 s "Get ready" countdown (it measures the room's
+   silence). Then stand in your resting position with your face, shoulders and both hands in
+   frame and hold still: calibration starts by itself once you're in frame and still, and takes
+   3 s. Posture and eye-level alerts are measured against it. Your typical pitch and volume are
+   learned as you talk (the last 10 s of speech).
 3. Present. Alerts pop up on the video; the pitch graph, transcript, filler counter and script
    progress update live.
 4. **End practice** to see your score, feedback and the playback.

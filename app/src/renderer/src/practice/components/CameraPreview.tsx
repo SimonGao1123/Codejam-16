@@ -12,6 +12,7 @@ type Props = {
   logWebcam: (message: ClientMessage) => void
   wpm: number | null
   wpmUpdatedAt: number | null
+  onCalibrated: (done: boolean) => void
   children: ReactNode
 }
 
@@ -23,6 +24,7 @@ export default function CameraPreview({
   logWebcam,
   wpm,
   wpmUpdatedAt,
+  onCalibrated,
   children
 }: Props): React.JSX.Element {
   const webcam = useRef<WebcamHandle>(null)
@@ -63,7 +65,12 @@ export default function CameraPreview({
           </div>
         )}
       </div>
-      <WebcamControls webcam={webcam} status={status} />
+      <WebcamControls
+        webcam={webcam}
+        status={status}
+        cameraStream={cameraStream}
+        onCalibrated={onCalibrated}
+      />
       {children}
     </section>
   )

@@ -4,8 +4,9 @@ Local WebSocket service the Electron app connects to. One port, two paths:
   ws://127.0.0.1:8766/webcam   landmarks in  -> overlay state out   (docs/webcam-protocol.md)
   ws://127.0.0.1:8766/audio    mic audio in  -> voice + transcript  (docs/audio-protocol.md)
 
-Both share one Session (it's a single-user desktop app): clicking Calibrate on the webcam side
-also calibrates the voice, and voice / filler alerts show up as banners on the webcam overlay.
+Both share one Session (it's a single-user desktop app): voice / filler / script alerts show up
+as banners on the webcam overlay. Calibration happens once at the start of each session (posture
+and resting hands from the webcam; the room's silence level is sent on the audio side).
 """
 
 import asyncio
@@ -80,8 +81,8 @@ async def webcam_connection(ws, session):
             )
             await ws.send(json.dumps(state))
         elif msg["type"] == "calibrate":
-            session.webcam.calibrate(msg.get("t"))
-            session.audio.request_calibration()
+            session.webcam.calibrate(msg.get("t"), msg.get("delay"), msg.get("duration"),
+                                     when_ready=bool(msg.get("when_ready")))
         elif msg["type"] == "settings":
             session.apply_settings(msg["rules"])
     log.info("webcam client disconnected")
@@ -127,6 +128,7 @@ async def audio_connection(ws, session):
                         body_incidents=body_incidents,
                         pace=session.audio.pace_summary(),
                         pace_target_wpm=session.audio.pace_target_wpm(),
+                        volume=session.audio.volume_summary(),
                     )
                     checkpoints = []
                     if started_at is not None:
@@ -139,8 +141,10 @@ async def audio_connection(ws, session):
 
                 for out in await run(finish_and_score):
                     await ws.send(json.dumps(out))
-            elif msg["type"] == "calibrate":
-                session.audio.request_calibration()
+            elif msg["type"] == "noise_floor":
+                await run(session.audio.set_noise_floor, msg.get("dbfs"))
+                log.info("room noise %.1f dBFS: not speaking below %.1f dBFS", msg["dbfs"],
+                         session.audio.voice.silence_dbfs)
             elif msg["type"] == "script":
                 await ws.send(json.dumps(await run(session.audio.set_script, msg.get("text"))))
     finally:

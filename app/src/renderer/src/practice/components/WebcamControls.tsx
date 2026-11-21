@@ -1,47 +1,69 @@
-// Calibration and analysis status beneath the camera preview.
+// Calibration and analysis status beneath the camera preview. Calibration isn't manual: every
+// practice session starts by recording the resting position once the speaker is in frame and
+// still (3 s), while the get-ready countdown also measures the room's silence for the voice side.
 
-import { useEffect, useEffectEvent } from 'react'
+import { useEffect, useRef } from 'react'
 
 import type { WebcamHandle, WebcamStatus } from './WebcamView'
 
 type Props = {
   webcam: React.RefObject<WebcamHandle | null>
   status: WebcamStatus
+  cameraStream: MediaStream | null // a new stream = a new practice session
+  onCalibrated: (done: boolean) => void // this session's calibration has finished
 }
 
-function calibrateLabel(cal: WebcamStatus['calibration']): string {
-  if (cal?.phase === 'waiting') return `Get ready... ${cal.remaining.toFixed(1)}s`
-  if (cal?.phase === 'recording') return `Hold still... ${cal.remaining.toFixed(1)}s`
-  return cal?.calibrated ? 'Recalibrate (c)' : 'Calibrate (c)'
+// every session starts by recording the resting position: as soon as the face, shoulders and both
+// hands are in frame and the speaker holds still, 3 s of recording (restarted if they move off)
+const SESSION_CALIBRATION = { delay: 0, duration: 3, when_ready: true }
+
+function calibrationText(cal: WebcamStatus['calibration'], sessionOn: boolean): string {
+  if (!sessionOn) return 'Calibrates when you start'
+  if (cal?.phase === 'arming') return cal.message // e.g. "Waiting to calibrate: show both hands"
+  if (cal?.phase === 'recording' || cal?.phase === 'waiting')
+    return `Calibrating: stand still · ${cal.remaining.toFixed(1)}s`
+  if (cal?.calibrated) return 'Calibrated'
+  return cal ? 'Not calibrated: face and shoulders not in frame' : 'Calibrating soon…'
 }
 
 export default function WebcamControls({
   webcam,
-  status
+  status,
+  cameraStream,
+  onCalibrated
 }: Props): React.JSX.Element {
-  const busy = status.calibration?.phase === 'waiting' || status.calibration?.phase === 'recording'
-  const canCalibrate = status.ready && status.connected && !busy
+  const cal = status.calibration
+  const busy = cal?.phase === 'arming' || cal?.phase === 'waiting' || cal?.phase === 'recording'
 
-  function calibrate(): void {
-    if (canCalibrate) webcam.current?.send({ type: 'calibrate', t: performance.now() / 1000 })
-  }
-
-  // c = calibrate (ignored while typing in a text field)
-  const onKey = useEffectEvent((e: KeyboardEvent) => {
-    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
-    if (e.key === 'c' && !e.metaKey && !e.ctrlKey && !typing) calibrate()
-  })
+  // start of each session: calibrate as soon as frames are being analysed and Python is connected
+  const calibratedStream = useRef<MediaStream | null>(null)
+  const sawCalibrating = useRef(false)
   useEffect(() => {
-    const listener = (e: KeyboardEvent): void => onKey(e)
-    window.addEventListener('keydown', listener)
-    return () => window.removeEventListener('keydown', listener)
-  }, [])
+    if (!cameraStream || !status.ready || !status.connected) return
+    if (calibratedStream.current === cameraStream) return
+    calibratedStream.current = cameraStream
+    sawCalibrating.current = false
+    webcam.current?.send({ type: 'calibrate', t: performance.now() / 1000, ...SESSION_CALIBRATION })
+  }, [cameraStream, status.ready, status.connected, webcam])
+
+  // done = this session's calibration was seen running and has since finished (not a leftover
+  // "calibrated" state from the previous session)
+  const calibrated = Boolean(cal?.calibrated)
+  useEffect(() => {
+    if (!cameraStream || calibratedStream.current !== cameraStream) return onCalibrated(false)
+    if (busy) sawCalibrating.current = true
+    onCalibrated(sawCalibrating.current && !busy && calibrated)
+  }, [cameraStream, busy, calibrated, onCalibrated])
 
   return (
     <div className="ph-webcam-bar">
-      <button onClick={calibrate} disabled={!canCalibrate} data-active={busy}>
-        {calibrateLabel(status.calibration)}
-      </button>
+      <span
+        className="ph-calibration"
+        data-state={busy ? 'busy' : cal?.calibrated ? 'done' : 'off'}
+        role="status"
+      >
+        {calibrationText(cal, Boolean(cameraStream))}
+      </span>
       <span className="ph-webcam-status" data-connected={status.connected}>
         {status.connected ? 'Webcam analysis connected' : 'Webcam analysis not connected'}
       </span>

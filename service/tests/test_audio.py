@@ -52,12 +52,24 @@ def test_tone_gives_pitch_and_volume(stt_model):
     assert abs(msgs[-1]["spike_hz"] - msgs[-1]["typical_hz"] * 2 ** (9 / 12)) < 0.5
 
 
-def test_voice_calibration_from_speechlike_tone(stt_model):
+def test_typical_pitch_follows_the_last_10_seconds_of_speech(stt_model):
     a = AudioAnalyzer(stt_model, AlertBoard())
-    a.request_calibration()
-    t = np.arange(SR * 4) / SR
-    msgs = feed_all(a, 0.2 * np.sin(2 * np.pi * 180 * t))
-    assert msgs[-1]["calibrated"] and "Voice calibrated: 180 Hz" in msgs[-1]["message"]
+    a.set_noise_floor(-70.0)
+    tone = lambda hz, s: (0.2 * np.sin(2 * np.pi * hz * np.arange(int(SR * s)) / SR)).astype(np.float32)  # noqa: E731
+    silence = lambda s: np.zeros(int(SR * s), dtype=np.float32)                                             # noqa: E731
+
+    msgs = feed_all(a, tone(150, 4))
+    assert abs(msgs[-1]["typical_hz"] - 150) < 5
+    # a long pause doesn't count: the window is 10 s of *speech*, so 150 Hz is still typical after it
+    msgs = feed_all(a, silence(20))
+    assert abs(msgs[-1]["typical_hz"] - 150) < 5
+    # 4 s at 150 + 4 s at 220 fit in the window together; the median sits between them
+    msgs = feed_all(a, tone(220, 4))
+    assert 140 < msgs[-1]["typical_hz"] < 230
+    # after more than 10 s at 220 Hz, the old 150 Hz speech has left the window
+    msgs = feed_all(a, tone(220, 8))
+    assert abs(msgs[-1]["typical_hz"] - 220) < 5
+    assert "calibrated" not in msgs[-1]                 # no voice calibration anymore
 
 
 def test_quiet_alert_posts_to_board(stt_model):
@@ -66,16 +78,16 @@ def test_quiet_alert_posts_to_board(stt_model):
     assert "Speak up" in board.active()
 
 
-def test_repeated_fillers_cost_more_in_twenty_four_point_rubric():
+def test_repeated_fillers_cost_more():
     voice = dict.fromkeys(VOICE_RULES, 0)
     body = dict.fromkeys(BODY_RULES, 0)
     result = score_presentation(filler_counts={"um": 8, "filler?": 5},
                                 voice_incidents=voice, body_incidents=body)
-    # Pace was not available, so the existing checks are normalized to the
-    # full 24-point rubric while measured_points reports what was assessed.
-    assert result["max_score"] == 24
+    # Pace and volume were not available, so the existing checks are normalized to the
+    # full 28-point rubric while measured_points reports what was assessed.
+    assert result["max_score"] == 28
     assert result["measured_points"] == 20
-    assert result["score"] == 18
+    assert result["score"] == 21
     assert result["categories"]["voice_tone"]["max_points"] == 3
     assert result["categories"]["body_language"]["max_points"] == 11
     assert score_presentation(filler_counts={"um": 100})["score"] == 0
@@ -84,8 +96,8 @@ def test_repeated_fillers_cost_more_in_twenty_four_point_rubric():
 def test_pace_scores_moderate_delivery_and_consistency():
     steady = score_presentation(pace={"average_wpm": 140, "segment_wpms": [135, 145, 140]})
     assert steady["categories"]["speaking_pace"]["points"] == 4
-    assert steady["max_score"] == 24
-    assert steady["score"] == 24
+    assert steady["max_score"] == 28
+    assert steady["score"] == 28
 
     rushed = score_presentation(pace={"average_wpm": 210, "segment_wpms": [100, 190, 240]})
     checks = rushed["categories"]["speaking_pace"]["checks"]
@@ -284,3 +296,125 @@ def test_pace_from_real_speech_with_moonshine(stt_model, tmp_path):
     summary = a.pace_summary()
     assert summary and 80 < summary["average_wpm"] < 260
     print("\nlive WPM readings:", readings[-5:], "final:", summary)
+
+
+def test_room_silence_level_separates_pauses_from_quiet_speech(stt_model):
+    t = np.arange(SR * 5) / SR
+    room = (0.003 * np.random.default_rng(0).standard_normal(len(t))).astype(np.float32)   # ~-50 dBFS hiss
+    quiet_voice = (0.006 * np.sin(2 * np.pi * 180 * t)).astype(np.float32)                 # ~-47 dBFS
+
+    # without a measured silence level, room hiss alone counts as "too quiet" -> Speak up
+    board = AlertBoard()
+    feed_all(AudioAnalyzer(stt_model, board), room)
+    assert "Speak up" in board.active()
+
+    # with it: the same hiss is just "not speaking" (a pause), no alert...
+    board = AlertBoard()
+    a = AudioAnalyzer(stt_model, board)
+    a.set_noise_floor(-50.0)
+    msgs = [m for m in feed_all(a, room) if m["type"] == "voice"]
+    assert "Speak up" not in board.active()
+    assert not msgs[-1]["speaking"] and msgs[-1]["silence_dbfs"] == -40.0
+
+    # ...while speaking above the room level but quietly still counts as speaking quietly
+    a = AudioAnalyzer(stt_model, AlertBoard())
+    a.set_noise_floor(-60.0)
+    msgs = [m for m in feed_all(a, quiet_voice) if m["type"] == "voice"]
+    assert msgs[-1]["speaking"] and msgs[-1]["pitch_hz"]
+
+
+def test_silence_level_survives_a_new_session_and_is_clamped(stt_model):
+    a = AudioAnalyzer(stt_model, AlertBoard())
+    a.set_noise_floor(-55.0)
+    a.reset()
+    assert a.voice.silence_dbfs == -45.0
+    a.set_noise_floor(-5.0)                        # a bad measurement (someone talked) is capped
+    assert a.voice.silence_dbfs == -30.0
+
+
+class PostedBoard(AlertBoard):
+    """Keeps every pop-up posted (the real board expires them)."""
+
+    def __init__(self):
+        super().__init__()
+        self.posted = []
+
+    def post(self, text):
+        self.posted.append(text)
+
+
+def test_long_pause_alerts_once_after_the_speaker_starts_talking(stt_model):
+    rng = np.random.default_rng(0)
+    room = lambda s: (rng.normal(0, 10 ** (-63 / 20), int(SR * s))).astype(np.float32)   # noqa: E731
+    tone = lambda s: (0.2 * np.sin(2 * np.pi * 160 * np.arange(int(SR * s)) / SR)).astype(np.float32)  # noqa: E731
+
+    def with_clicks(audio):
+        # noise bursts well above the silence level (like the spikes on the volume graph)
+        for at in (1.0, 1.3, 2.5):
+            i = int(SR * at)
+            audio[i:i + 400] += rng.normal(0, 0.02, 400).astype(np.float32)
+        return audio
+
+    board = PostedBoard()
+    a = AudioAnalyzer(stt_model, board)
+    a.set_noise_floor(-64.0)                            # not speaking below -54 dBFS
+    feed_all(a, room(8))                                # before the first word: no pause alert
+    assert "Keep talking" not in board.posted
+    feed_all(a, tone(3))
+    feed_all(a, room(2.5))                              # a short, deliberate pause is fine
+    feed_all(a, tone(2))
+    assert "Keep talking" not in board.posted
+    feed_all(a, with_clicks(room(8)))                   # long pause; clicks don't reset the timer
+    assert board.posted.count("Keep talking") == 1      # once per pause, ~5 s in
+    feed_all(a, tone(2))
+    feed_all(a, room(6))
+    assert board.posted.count("Keep talking") == 2      # the next long pause alerts again
+
+    # the Live alerts rule: turned off -> no pop-up; its minimum duration is the pause length
+    board = PostedBoard()
+    a = AudioAnalyzer(stt_model, board)
+    a.set_noise_floor(-64.0)
+    a.apply_settings({"pause": {"enabled": True, "duration": 10, "cooldown": 0}})
+    feed_all(a, tone(2))
+    feed_all(a, room(8))
+    assert "Keep talking" not in board.posted           # 8 s < 10 s
+    a.apply_settings({"pause": {"enabled": False, "duration": 3, "cooldown": 0}})
+    feed_all(a, tone(2))
+    feed_all(a, room(6))
+    assert "Keep talking" not in board.posted
+
+
+def test_volume_scores_projection_steadiness_and_long_pauses():
+    loud = score_presentation(volume={"speech_dbfs": -30, "segment_dbfs": [-30, -31, -29], "room_dbfs": -64},
+                              voice_incidents={"pause": 0})
+    v = loud["categories"]["volume"]
+    assert v["points"] == 4 and v["max_points"] == 4 and v["checks"]["projection"]["margin_db"] == 34
+
+    # barely above the room, trailing off, and three long pauses
+    weak = score_presentation(volume={"speech_dbfs": -47, "segment_dbfs": [-38, -46, -56], "room_dbfs": -64},
+                              voice_incidents={"pause": 3})
+    checks = weak["categories"]["volume"]["checks"]
+    assert 0 < checks["projection"]["deduction"] < 2          # 17 dB above the room: partial credit
+    assert 0.5 < checks["steady_volume"]["deduction"] < 1      # ~7 dB spread between the parts
+    assert "quieter as you went on" in checks["steady_volume"]["feedback"]
+    assert checks["long_pause"]["deduction"] == 1             # capped
+
+    # no room measurement and under 20 s of speech: only long pauses are scored
+    partial = score_presentation(volume={"speech_dbfs": -30, "segment_dbfs": [-30], "room_dbfs": None},
+                                 voice_incidents={"pause": 0})
+    assert list(partial["categories"]["volume"]["checks"]) == ["long_pause"]
+
+
+def test_analyzer_volume_summary_from_speech(stt_model):
+    a = AudioAnalyzer(stt_model, AlertBoard())
+    a.set_noise_floor(-64.0)
+    tone = lambda amp, s: (amp * np.sin(2 * np.pi * 160 * np.arange(int(SR * s)) / SR)).astype(np.float32)  # noqa: E731
+    feed_all(a, tone(0.2, 3))
+    assert a.volume_summary() is None                         # under 5 s of speech
+    feed_all(a, np.zeros(SR * 10, dtype=np.float32))         # silence doesn't count toward it
+    feed_all(a, tone(0.2, 9))
+    feed_all(a, tone(0.05, 12))                               # quieter second half
+    s = a.volume_summary()
+    assert s["room_dbfs"] == -64.0 and len(s["segment_dbfs"]) == 2
+    assert s["segment_dbfs"][0] - s["segment_dbfs"][1] > 10
+    assert a.voice_incidents["pause"] >= 1                    # the 10 s silence after speaking

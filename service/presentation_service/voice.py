@@ -1,6 +1,9 @@
 """Voice pitch spikes, volume spikes and sustained low volume, on 50 ms blocks of 16 kHz audio.
-VoiceMonitor is from experiments/gap_heuristic/voice_pitch.py; the calibration flow (collect a few
-seconds of voiced audio as the speaker's normal level) is from voice_pitch_gui.py."""
+VoiceMonitor is from experiments/gap_heuristic/voice_pitch.py.
+
+There's no voice calibration step: the speaker's typical pitch and volume are always the median of
+their last BASELINE_SPEECH_S seconds of speech. Silence doesn't count (only blocks above the room's
+silence level, measured at session start, have a pitch), so a pause doesn't empty the window."""
 
 from collections import deque
 from dataclasses import dataclass
@@ -12,13 +15,15 @@ import numpy as np
 SAMPLE_RATE = 16_000
 BLOCK_SECONDS = 0.05
 BLOCK_SIZE = round(SAMPLE_RATE * BLOCK_SECONDS)
-BASELINE_MIN_BLOCKS = round(1 / BLOCK_SECONDS)
-BASELINE_HISTORY_BLOCKS = round(4 / BLOCK_SECONDS)
+BASELINE_SPEECH_S = 10            # typical pitch / volume = median of the last 10 s of speech
+BASELINE_MIN_BLOCKS = round(1 / BLOCK_SECONDS)                   # ...once there's 1 s of speech
+BASELINE_HISTORY_BLOCKS = round(BASELINE_SPEECH_S / BLOCK_SECONDS)
+# a pause ends only after this much continuous voiced audio, so a click, cough or noise blip just
+# above the silence level doesn't reset the long-pause timer
+SPEECH_RESUME_BLOCKS = 3          # 150 ms
 PITCH_FRAME_SIZE = round(SAMPLE_RATE * 0.04)
 MIN_PITCH_LAG = SAMPLE_RATE // 450
 MAX_PITCH_LAG = SAMPLE_RATE // 70
-CALIBRATION_VOICED_SECONDS = 3
-CALIBRATION_TIMEOUT_SECONDS = 10
 
 
 def pitch_hz(samples):
@@ -74,9 +79,10 @@ class AlertRule:
 class VoiceMonitor:
     # short banner text for each alert (the full sentences are in the docstrings below)
     QUIET, VOLUME_SPIKE, PITCH_SPIKE = "Speak up", "Steady your volume", "Steady your pitch"
+    PAUSE = "Keep talking"
 
     def __init__(self, quiet_dbfs=-45.0, quiet_drop_db=15.0, noise_floor_dbfs=-60.0,
-                 quiet_seconds=3.0, volume_jump_db=8.0, pitch_jump_semitones=9.0):
+                 quiet_seconds=3.0, volume_jump_db=8.0, pitch_jump_semitones=9.0, pause_seconds=5.0):
         self.quiet_dbfs = quiet_dbfs
         self.quiet_drop_db = quiet_drop_db
         self.noise_floor_dbfs = noise_floor_dbfs
@@ -86,63 +92,70 @@ class VoiceMonitor:
         self.pitch_history = deque(maxlen=BASELINE_HISTORY_BLOCKS)
         self.latest_pitch_hz = None
         self.latest_volume_dbfs = None
-        self.typical_pitch_hz = None          # calibrated pitch, or the running median before that
+        self.typical_pitch_hz = None          # median pitch of the last BASELINE_SPEECH_S of speech
         self.typical_volume_dbfs = None
-        self.calibrated_baseline = None
+        # "not speaking" level from the room's measured noise (set_silence); None = unknown, then the
+        # fixed noise_floor_dbfs gates pitch and every quiet block counts as "too quiet"
+        self.silence_dbfs = None
+        self.speaking = False
         self.quiet = AlertRule(quiet_seconds)
         self.volume_spike = AlertRule(0.3)
         self.pitch_spike = AlertRule(0.2)
+        # long pause: not speaking (no voiced audio above the silence level) for pause_seconds, once
+        # the speaker has started talking (so the time before the first word doesn't count)
+        self.pause = AlertRule(pause_seconds)
+        self.voiced_run = 0
+        self.has_spoken = False
 
     def measure(self, samples):
         """Measure pitch and volume for one 50 ms mono audio block."""
         rms = np.sqrt(np.mean(np.square(samples, dtype=np.float64)))
         volume = 20 * np.log10(max(rms, 1e-8))
-        pitch = pitch_hz(samples) if volume >= self.noise_floor_dbfs else None
+        gate = self.noise_floor_dbfs if self.silence_dbfs is None else self.silence_dbfs
+        self.speaking = volume >= gate
+        pitch = pitch_hz(samples) if self.speaking else None
         self.latest_pitch_hz = pitch
         self.latest_volume_dbfs = volume
         return pitch, volume
 
-    def calibrate(self, voiced_readings):
-        pitches, volumes = zip(*voiced_readings)
-        self.calibrated_baseline = median(pitches), median(volumes)
-        self.typical_pitch_hz = self.calibrated_baseline[0]
-        self.reset_pending_alerts()
-        return self.calibrated_baseline
-
     def process(self, samples, elapsed_seconds):
-        """Return alerts for one 50 ms mono audio block: QUIET (too quiet or paused for too long),
-        VOLUME_SPIKE (keep your level steady), PITCH_SPIKE (avoid sudden jumps in pitch)."""
+        """Return alerts for one 50 ms mono audio block: QUIET (speaking too quietly), PAUSE (not
+        speaking for too long), VOLUME_SPIKE (keep your level steady), PITCH_SPIKE (avoid sudden
+        jumps in pitch)."""
         pitch, volume = self.measure(samples)
-        # Use voiced audio to establish typical levels without including room noise.
-        if self.calibrated_baseline is None:
-            typical_volume = (median(self.volume_history)
-                              if len(self.volume_history) >= BASELINE_MIN_BLOCKS else None)
-            typical_pitch = (median(self.pitch_history)
-                             if len(self.pitch_history) >= BASELINE_MIN_BLOCKS else None)
-        else:
-            typical_pitch, typical_volume = self.calibrated_baseline
+        # typical levels = median of the last BASELINE_SPEECH_S of speech (room noise excluded)
+        typical_volume = (median(self.volume_history)
+                          if len(self.volume_history) >= BASELINE_MIN_BLOCKS else None)
+        typical_pitch = (median(self.pitch_history)
+                         if len(self.pitch_history) >= BASELINE_MIN_BLOCKS else None)
         self.typical_pitch_hz = typical_pitch
         self.typical_volume_dbfs = typical_volume
-        # Before calibration the fixed level is a floor; after it, quiet is relative to the speaker.
-        if self.calibrated_baseline is not None:
-            quiet_threshold = max(self.noise_floor_dbfs, typical_volume - self.quiet_drop_db)
-        elif typical_volume is not None:
-            quiet_threshold = max(self.quiet_dbfs, typical_volume - self.quiet_drop_db)
-        else:
-            quiet_threshold = self.quiet_dbfs
+        # quiet = well below the speaker's own typical level, with a fixed floor
+        quiet_threshold = (max(self.quiet_dbfs, typical_volume - self.quiet_drop_db)
+                           if typical_volume is not None else self.quiet_dbfs)
 
         too_quiet = volume < quiet_threshold
+        if self.silence_dbfs is not None:
+            # with the room's silence level known, "too quiet" means speaking quietly; silence
+            # (at the room's noise level) is a pause, not quiet speech
+            too_quiet = too_quiet and self.speaking
         loud = typical_volume is not None and volume - typical_volume >= self.volume_jump_db
         high_pitch = (not too_quiet and pitch is not None and typical_pitch is not None
                       and 12 * np.log2(pitch / typical_pitch) >= self.pitch_jump_semitones)
 
-        if self.calibrated_baseline is None and pitch is not None and not too_quiet:
+        if pitch is not None and not too_quiet:
             if not loud:
                 self.volume_history.append(volume)
             if not high_pitch:
                 self.pitch_history.append(pitch)
 
+        self.voiced_run = self.voiced_run + 1 if pitch is not None else 0
+        talking = self.voiced_run >= SPEECH_RESUME_BLOCKS
+        self.has_spoken = self.has_spoken or talking
+
         alerts = []
+        if self.pause.update(self.has_spoken and not talking, elapsed_seconds):
+            alerts.append(self.PAUSE)
         if self.quiet.update(too_quiet, elapsed_seconds):
             alerts.append(self.QUIET)
         if self.volume_spike.update(loud, elapsed_seconds):
@@ -153,45 +166,6 @@ class VoiceMonitor:
 
     def reset_pending_alerts(self):
         self.quiet.reset()
+        self.pause.reset()
         self.volume_spike.reset()
         self.pitch_spike.reset()
-
-
-class VoiceCalibration:
-    """Collects CALIBRATION_VOICED_SECONDS of voiced audio (giving up after the timeout) and sets
-    it as the speaker's normal pitch and volume."""
-
-    def __init__(self, monitor):
-        self.monitor = monitor
-        self.readings = []
-        self.started_block = None
-        self.message = ""
-
-    @property
-    def active(self):
-        return self.started_block is not None
-
-    def start(self, block):
-        self.readings.clear()
-        self.started_block = block
-        self.message = "Voice: speak a few sentences in your normal voice"
-
-    def collect(self, samples, block):
-        """Feed one block while active; returns True when calibration just finished."""
-        pitch, volume = self.monitor.measure(samples)
-        if pitch is not None:
-            self.readings.append((pitch, volume))
-        voiced = len(self.readings) * BLOCK_SECONDS
-        elapsed = (block - self.started_block) * BLOCK_SECONDS
-        if voiced >= CALIBRATION_VOICED_SECONDS:
-            pitch, volume = self.monitor.calibrate(self.readings)
-            self.message = f"Voice calibrated: {pitch:.0f} Hz, {volume:.0f} dBFS"
-        elif elapsed >= CALIBRATION_TIMEOUT_SECONDS:
-            self.message = "Voice: too little speech to calibrate - try again"
-        else:
-            self.message = f"Voice: keep talking normally ({voiced:.1f} / {CALIBRATION_VOICED_SECONDS} s)"
-            return False
-        self.started_block = None
-        self.readings.clear()
-        self.monitor.reset_pending_alerts()
-        return True

@@ -36,14 +36,23 @@ all the calculations and replies with what to draw on top of the video.
 `t` is seconds on a monotonic clock. Use it for all timing (alert hold times, calibration
 countdown, speeds) instead of the wall clock, so recorded sessions replay identically.
 
-### `calibrate`: the user clicked Calibrate (or pressed `c`)
+### `calibrate`: sent automatically at the start of every practice session
 
 ```json
-{ "type": "calibrate", "t": 12.345 }
+{ "type": "calibrate", "t": 12.345, "delay": 0, "duration": 3, "when_ready": true }
 ```
 
-The service runs the 2 s get-into-position pause and the 2 s recording, timed by the `t` of the
-frames that follow.
+There's no manual calibration. At the start of each session (including "Start another session")
+the app sends this as soon as frames are analysed and the service is connected. With
+`when_ready`, the service **waits** (phase `arming`) until the face, both shoulders and both hands
+are in frame and the speaker holds fairly still (wrists and shoulders barely moving) for 0.75 s,
+then records 3 s of the resting position: shoulder tilt, head pitch, eye gaze, resting hands.
+While waiting, `calibration.message` says what's missing ("Waiting to calibrate: show both hands,
+hold still"); the overlay shows it large and the status chip under the video repeats it. If the
+speaker leaves the frame or moves for 0.4 s during the recording, it starts over ("Calibration
+restarted: ..."), so a bad moment can't become the baseline. Posture / eye-level alerts and
+scoring are paused until calibration is done. Without `when_ready`, recording starts after
+`delay` seconds regardless (defaults 2 s pause, 2 s recording).
 
 ### `settings`: the Live alerts tab's rules
 
@@ -66,7 +75,7 @@ Sent when the connection opens and whenever a rule changes on the Live alerts ta
 | `still` | Use your hands | — |
 | `fast` | Slow your hands | wrist speed, shoulder widths / s |
 | `repeat` | Vary your gestures | % self-similarity (0.8 score = 80) |
-| `volume`, `pitch`, `quiet`, `filler` | voice / filler alerts (applied by the audio side, see `audio-protocol.md`) | |
+| `volume`, `pitch`, `quiet`, `pause`, `filler` | voice / filler alerts (applied by the audio side, see `audio-protocol.md`) | |
 | `off_script`, `out_of_order`, `stuck` | script alerts, only with a script (audio side, see `audio-protocol.md`) | % match needed / — / × expected time |
 
 `duration` = seconds the problem must last before the alert shows; `cooldown` = seconds after an
@@ -106,7 +115,7 @@ compact / silent) isn't sent: Electron applies it when drawing `alerts`.
 | `alerts`              | Drawn in the Live alerts style: banner (wide yellow box), compact (pill at the top right), silent (none) |
 | `rest_circles`        | Thin circles; `r` is a fraction of the video width; `active` = green                                 |
 | `hand_labels`         | Yellow text next to the point (Electron offsets it by +10, +20 px)                                   |
-| `calibration.phase`   | `idle` / `waiting` (big countdown from `remaining`) / `recording`; also sets the button label        |
+| `calibration.phase`   | `idle` / `arming` (waiting for the speaker: `message` drawn large) / `waiting` / `recording` (big countdown from `remaining`); also the status chip under the video |
 | `calibration.message` | Line under the status lines; green once `calibrated`, else yellow                                    |
 
 ## What the service computes
@@ -117,9 +126,9 @@ compact / silent) isn't sent: Electron applies it when drawing `alerts`.
 the same thresholds). Each `[x, y, z, v]` list is wrapped in a small object with `.x` / `.y` / `.z`
 / `.visibility`, so the functions are unchanged.
 
-The audio side adds to each `state`: a `voice: ... Hz ... dBFS` status line (or the voice
-calibration status), and voice / filler alerts in `alerts` (see `audio-protocol.md`). A
-`calibrate` message also starts voice calibration.
+The audio side adds to each `state`: a `voice: ... Hz ... dBFS` status line (with "(not speaking)"
+at the room's silence level), and voice / filler / script alerts in `alerts` (see
+`audio-protocol.md`).
 
 ## Recordings
 

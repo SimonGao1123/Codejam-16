@@ -26,14 +26,28 @@ own rate in an audio worklet. Clients that omit `started_at` send raw samples wi
 ```
 
 ```json
+{"type": "noise_floor", "dbfs": -59.9}   // room noise, sent just before session_start
+```
+
+The app measures the room while the user stands still during the session's 3 s get-ready
+countdown (mic open, nothing streamed yet): the median level of 50 ms blocks of the same 16 kHz
+audio, with the same dBFS formula as the service. The service then treats audio up to 10 dB above
+it (clamped to -70...-30 dBFS) as **not speaking**: no pitch is measured, the typical volume is
+learned only from speech, "Speak up" fires only for speaking quietly, and not speaking for 5 s
+(once you've started) is a long pause ("Keep talking"; 150 ms of continuous voiced audio ends a
+pause, so clicks and noise blips don't). Without
+it, fixed levels are used (pitch ignored below -60 dBFS, anything under -45 dBFS is "too quiet").
+
+```json
 {"type": "script", "text": "Good morning everyone..." | null}   // the user's script; null/empty = off
 ```
 
 Sent when the connection opens, when the script changes (once typing pauses), and before
 `session_start` if it changed. The service keeps it across sessions until it changes.
 
-Voice calibration has no message of its own: the webcam side's `calibrate` message (the Calibrate
-button) also starts voice calibration. Speak normally for 3 s (10 s timeout).
+There's no voice calibration: the typical pitch and volume are always the median of the last
+**10 s of speech** (pauses don't count, so a silence doesn't reset it), after the first second.
+The only voice-side measurement at session start is the room's silence level (`noise_floor`).
 
 The app sends both controls for camera-only practice too. Raw audio is optional.
 
@@ -58,17 +72,17 @@ than eight seconds of active speech leave pace unmeasured.
 
 ```json
 {"type": "voice", "pitch_hz": 182.4, "pitches": [179.8, 182.4], "volume_dbfs": -31.2,
- "typical_hz": 168.0, "spike_hz": 282.5,
- "calibrated": false, "calibrating": false, "message": ""}
+ "typical_hz": 168.0, "spike_hz": 282.5, "speaking": true, "silence_dbfs": -49.9}
 ```
 
 `captured_at` gives the latest reading's time on the renderer's monotonic clock, or `null`
-when audio arrives without timestamps. `pitch_hz` is the latest reading, `null` when the audio isn't voiced (silence, breath, s/t/k
+when audio arrives without timestamps. `speaking` is false at the room's noise level (see `noise_floor`); `silence_dbfs` is that level
+(null if the room wasn't measured; the volume graph draws it as "Not speaking below ...").
+`pitch_hz` is the latest reading, `null` when the audio isn't voiced (silence, breath, s/t/k
 sounds). `pitches` holds every 50 ms reading since the last message, oldest first; the Voice pitch
-graph plots these. `typical_hz` is the calibrated pitch, or the running typical pitch before
-calibration (`null` for the first second of speech). `spike_hz` is where a pitch-spike alert fires
-(`typical_hz` raised by the Live alerts pitch threshold, in semitones). `message` is the calibration
-status, such as "Voice: keep talking normally (1.5 / 3 s)" or "Voice calibrated: 180 Hz, -30 dBFS".
+graph plots these. `typical_hz` is the median pitch of the last 10 s of speech (`null` for the first
+second of speech). `spike_hz` is where a pitch-spike alert fires (`typical_hz` raised by the Live
+alerts pitch threshold, in semitones).
 
 ### `transcript`: whenever the transcript changes
 
@@ -132,13 +146,13 @@ Script pop-ups (no part numbers; mid-talk they mean nothing): `Skipped ahead` / 
 seconds off script before it fires) and `Move on to the next part` (rule `stuck`: threshold = how
 many times a part's expected speaking time, at least 20 s).
 
-The Live alerts tab's `volume`, `pitch`, `quiet` and `filler` rules (sent in the webcam side's
-`settings` message) control these: on/off, threshold (dB above / semitones above / dB below
-normal), minimum duration and cooldown. Fillers are always counted in the transcript; the rule
+The Live alerts tab's `volume`, `pitch`, `quiet`, `pause` and `filler` rules (sent in the webcam
+side's `settings` message) control these: on/off, threshold (dB above / semitones above / dB below
+normal), minimum duration (for `pause`, how long a pause may be) and cooldown. Fillers are always counted in the transcript; the rule
 only controls the pop-up.
 
 The audio side posts alerts that the webcam side adds to its `alerts` banners for 2.5 s:
-`Speak up` (too quiet or paused too long), `Steady your volume`, `Steady your pitch`, and
+`Speak up` (speaking too quietly), `Keep talking` (long pause), `Steady your volume`, `Steady your pitch`, and
 `Filler: um` (etc.) each time a filler is detected. The current voice reading also appears as a
 status line (`voice: 182 Hz  -31 dBFS`).
 

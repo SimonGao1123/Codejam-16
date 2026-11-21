@@ -15,6 +15,9 @@ export default function Practice(): React.JSX.Element {
   const [score, setScore] = useState<SessionScoreMessage | null>(null)
   const { running, finished, camera, microphone, cameraStream, micStream, pending } = session
   const [script, setScript] = useState('') // optional; empty = no script tracking
+  // with the camera on, a session only counts once calibration has finished: stopping before that
+  // gives no score and deletes the recording
+  const [calibrated, setCalibrated] = useState(false)
   const speech = useAudioAnalysis(micStream, script, session.startedAt, setScore)
 
   return (
@@ -37,6 +40,7 @@ export default function Practice(): React.JSX.Element {
           logWebcam={session.logWebcam}
           wpm={speech.wpm}
           wpmUpdatedAt={speech.wpmUpdatedAt}
+          onCalibrated={setCalibrated}
         >
           <MicrophoneMeter micStream={micStream} pending={pending && microphone} />
         </CameraPreview>
@@ -56,11 +60,20 @@ export default function Practice(): React.JSX.Element {
             setScore(null)
             return session.startPractice()
           }}
-          endPractice={session.endPractice}
+          endPractice={() => session.endPractice(Boolean(cameraStream) && !calibrated)}
         />
       </div>
       <ScriptPanel script={script} setScript={setScript} running={running} speech={speech} />
-      {session.recordingError && <p className="ph-error" role="status">{session.recordingError}</p>}
+      {session.discarded && (
+        <p className="ph-notice" role="status">
+          You stopped before calibration finished, so this session wasn&apos;t scored or recorded.
+        </p>
+      )}
+      {session.recordingError && (
+        <p className="ph-error" role="status">
+          {session.recordingError}
+        </p>
+      )}
       {session.playbackUrl && (
         <PresentationPlayback
           url={session.playbackUrl}
@@ -68,7 +81,7 @@ export default function Practice(): React.JSX.Element {
           checkpoints={score?.checkpoints ?? []}
         />
       )}
-      {finished && score && <SessionResults result={score} />}
+      {finished && score && !session.discarded && <SessionResults result={score} />}
       <TranscriptPanel speech={speech} running={running} />
     </main>
   )

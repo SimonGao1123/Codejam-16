@@ -43,8 +43,10 @@ export class WebcamRecorder {
     if (this.recorder) window.api.webcamRecorder.line(JSON.stringify(msg))
   }
 
-  /** Stops and finishes writing; resolves with the saved file paths. */
-  async stop(): Promise<{ video: string; data: string; playbackUrl: string } | null> {
+  /** Stops and finishes writing; resolves with the saved file paths (null if discarded). */
+  async stop(
+    discard = false
+  ): Promise<{ video: string; data: string; playbackUrl: string } | null> {
     const recorder = this.recorder
     if (!recorder) return null
     this.recorder = null
@@ -53,9 +55,9 @@ export class WebcamRecorder {
     try {
       await this.pending
     } catch (error) {
-      await window.api.webcamRecorder.stop()
+      await window.api.webcamRecorder.stop(discard)
       throw error
     }
-    return window.api.webcamRecorder.stop()
+    return window.api.webcamRecorder.stop(discard)
   }
 }

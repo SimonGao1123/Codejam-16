@@ -267,6 +267,14 @@
 .ph-error {
   color: #f6d58e;
 }
+.ph-notice {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 10px;
+  color: #33250d;
+  background: #f6d58e;
+  font-weight: 600;
+}
 .ph-app .ph-session-action {
   width: 100%;
   border: 0;
@@ -304,6 +312,22 @@
 .ph-app .ph-webcam-bar button[data-active='true'] {
   background: #f6d58e;
   color: #33250d;
+}
+.ph-calibration {
+  font-size: 13px;
+  font-weight: 650;
+  padding: 5px 12px;
+  border-radius: 8px;
+  color: #c4bfda;
+  background: #2a2c3e;
+}
+.ph-calibration[data-state='busy'] {
+  color: #33250d;
+  background: #f6d58e;
+}
+.ph-calibration[data-state='done'] {
+  color: #b9f0b9;
+  background: #1f3a24;
 }
 .ph-webcam-status {
   font-size: 13px;
