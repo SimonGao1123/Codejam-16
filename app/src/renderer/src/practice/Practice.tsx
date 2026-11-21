@@ -21,6 +21,7 @@ export default function Practice(): React.JSX.Element {
       <div className="ph-workspace">
         <CameraPreview
           cameraStream={cameraStream}
+          micStream={micStream}
           camera={camera}
           pending={pending}
           running={running}

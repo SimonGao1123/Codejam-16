@@ -5,7 +5,7 @@ skeleton itself. It sends the raw landmarks to the **webcam analysis service** (
 all the calculations and replies with what to draw on top of the video.
 
 - Transport: one WebSocket at **`ws://127.0.0.1:8766`**, JSON text messages.
-- TypeScript types: `app/src/renderer/src/webcam/protocol.ts`. Keep this file and that one in sync.
+- TypeScript types: `app/src/renderer/src/practice/webcamProtocol.ts`. Keep this file and that one in sync.
 - Electron reconnects every second if the service isn't running, and drops frames instead of
   queueing them when the service falls behind.
 
@@ -37,7 +37,7 @@ countdown, speeds) instead of the wall clock, so recorded sessions replay identi
 ### `calibrate`: the user clicked Calibrate (or pressed `c`)
 
 ```json
-{"type": "calibrate", "t": 12.345}
+{ "type": "calibrate", "t": 12.345 }
 ```
 
 The service runs the 2 s get-into-position pause and the 2 s recording, timed by the `t` of the
@@ -51,22 +51,32 @@ frames that follow.
 {
   "type": "state",
   "t": 12.345,
-  "lines": [{"text": "shoulder tilt: +1.2 deg  (+0.4 vs calibrated)", "color": "white"}],
+  "lines": [
+    {
+      "text": "shoulder tilt: +1.2 deg  (+0.4 vs calibrated)",
+      "color": "white"
+    }
+  ],
   "alerts": ["Look up", "Use your hands"],
-  "rest_circles": [{"x": 0.35, "y": 0.8, "r": 0.06, "active": true}],
-  "hand_labels": [{"x": 0.35, "y": 0.75, "text": "L +12 deg"}],
-  "calibration": {"phase": "idle", "remaining": 0, "calibrated": true, "message": "Calibrated: ..."}
+  "rest_circles": [{ "x": 0.35, "y": 0.8, "r": 0.06, "active": true }],
+  "hand_labels": [{ "x": 0.35, "y": 0.75, "text": "L +12 deg" }],
+  "calibration": {
+    "phase": "idle",
+    "remaining": 0,
+    "calibrated": true,
+    "message": "Calibrated: ..."
+  }
 }
 ```
 
-| Field | Drawn as |
-|---|---|
-| `lines` | Status lines, top-left, under Electron's own FPS line. `color`: `white` / `red` / `yellow` / `green` |
-| `alerts` | Red banners, centered, stacked below the status lines |
-| `rest_circles` | Thin circles; `r` is a fraction of the video width; `active` = green |
-| `hand_labels` | Yellow text next to the point (Electron offsets it by +10, +20 px) |
-| `calibration.phase` | `idle` / `waiting` (big countdown from `remaining`) / `recording`; also sets the button label |
-| `calibration.message` | Line under the status lines; green once `calibrated`, else yellow |
+| Field                 | Drawn as                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------- |
+| `lines`               | Status lines, top-left, under Electron's own FPS line. `color`: `white` / `red` / `yellow` / `green` |
+| `alerts`              | Red banners, centered, stacked below the status lines                                                |
+| `rest_circles`        | Thin circles; `r` is a fraction of the video width; `active` = green                                 |
+| `hand_labels`         | Yellow text next to the point (Electron offsets it by +10, +20 px)                                   |
+| `calibration.phase`   | `idle` / `waiting` (big countdown from `remaining`) / `recording`; also sets the button label        |
+| `calibration.message` | Line under the status lines; green once `calibrated`, else yellow                                    |
 
 ## What the service computes
 
@@ -78,7 +88,7 @@ object is enough to reuse them.
 
 ## Recordings
 
-The Record button saves `~/Movies/Presentation Helper/<time>.webm` (webcam video + mic track) and
+The Record button on the Practice page (under the camera preview) saves `~/Movies/Presentation Helper/<time>.webm` (webcam video + mic track) and
 `<time>.jsonl`. The first line of the `.jsonl` is `{"type": "recording", "t": ..., "video": ...}`,
 giving the frame clock time when the video started. Every following line is a message exactly as
 sent to the service, so feeding the lines to the service in order replays the session.

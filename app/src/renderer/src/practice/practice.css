@@ -169,6 +169,18 @@
   object-fit: contain;
   transform: scaleX(-1);
 }
+.ph-video canvas {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain; /* same letterboxing as the video, so the overlay lines up */
+  pointer-events: none;
+  /* the mirrored video's transform paints it in a later layer; without this it covers the canvas */
+  position: relative;
+  z-index: 1;
+}
 .ph-video-empty {
   grid-area: 1 / 1;
   text-align: center;
@@ -267,6 +279,51 @@
 .ph-app .ph-session-action[data-active='true'] {
   background: #f6d58e;
   color: #33250d;
+}
+
+.ph-webcam-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 11px 16px;
+  border-top: 1px solid #38334e;
+}
+.ph-app .ph-webcam-bar button {
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 12px;
+  color: #231743;
+  background: #c4aeff;
+  font-weight: 700;
+}
+.ph-app .ph-webcam-bar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ph-app .ph-webcam-bar button[data-active='true'] {
+  background: #f6d58e;
+  color: #33250d;
+}
+.ph-app .ph-webcam-bar button[data-recording='true'] {
+  background: #e65c5c;
+  color: #fff;
+}
+.ph-webcam-status {
+  font-size: 13px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  color: #f6d58e;
+  background: #3a3220;
+}
+.ph-webcam-status[data-connected='true'] {
+  color: #b9f0b9;
+  background: #1f3a24;
+}
+.ph-webcam-note {
+  color: #c4bfda;
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 660px) {

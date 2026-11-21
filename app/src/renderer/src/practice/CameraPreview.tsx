@@ -1,7 +1,11 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
+
+import WebcamControls from './WebcamControls'
+import WebcamView, { type WebcamHandle, type WebcamStatus } from './WebcamView'
 
 type Props = {
   cameraStream: MediaStream | null
+  micStream: MediaStream | null
   camera: boolean
   pending: boolean
   running: boolean
@@ -10,15 +14,19 @@ type Props = {
 
 export default function CameraPreview({
   cameraStream,
+  micStream,
   camera,
   pending,
   running,
   children
 }: Props): React.JSX.Element {
-  const video = useRef<HTMLVideoElement>(null)
-  useEffect(() => {
-    if (video.current) video.current.srcObject = cameraStream
-  }, [cameraStream])
+  const webcam = useRef<WebcamHandle>(null)
+  const [status, setStatus] = useState<WebcamStatus>({
+    ready: false,
+    error: null,
+    connected: false,
+    calibration: null
+  })
 
   return (
     <section className="ph-stage" aria-labelledby="ph-camera-heading">
@@ -27,14 +35,7 @@ export default function CameraPreview({
         <span>{cameraStream ? 'Camera on' : pending && camera ? 'Connecting' : 'Camera off'}</span>
       </div>
       <div className="ph-video">
-        <video
-          ref={video}
-          autoPlay
-          playsInline
-          muted
-          hidden={!cameraStream}
-          aria-label="Live camera preview"
-        />
+        <WebcamView ref={webcam} stream={cameraStream} onStatus={setStatus} />
         {!cameraStream && (
           <div className="ph-video-empty">
             <span className="ph-camera-icon" aria-hidden="true" />
@@ -46,6 +47,12 @@ export default function CameraPreview({
           </div>
         )}
       </div>
+      <WebcamControls
+        webcam={webcam}
+        status={status}
+        cameraStream={cameraStream}
+        micStream={micStream}
+      />
       {children}
     </section>
   )

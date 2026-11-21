@@ -1,7 +1,7 @@
 // Canvas drawing over the webcam, ported from webcam_test.py. The canvas is sized to the video's
 // pixel size, so the pixel sizes below match the Python version on the same camera.
 
-import type { FrameMessage, OverlayColor, StateMessage } from './protocol'
+import type { FrameMessage, OverlayColor, StateMessage } from './webcamProtocol'
 
 export const POSE_CONNECTIONS: [number, number][] = [
   [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8],

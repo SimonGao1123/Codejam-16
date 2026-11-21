@@ -2,13 +2,14 @@
 // analysis service as .jsonl, so a session can be replayed into Python later. Files are written by the
 // main process (see src/main/webcamRecorder.ts), streamed so long sessions don't sit in memory.
 
-import type { ClientMessage } from './protocol'
+import type { ClientMessage } from './webcamProtocol'
 
 const CHUNK_MS = 1000
 
 export class WebcamRecorder {
   private recorder: MediaRecorder | null = null
   private pending: Promise<void> = Promise.resolve()
+  private stopped: Promise<void> = Promise.resolve()
 
   get active(): boolean {
     return this.recorder !== null
@@ -31,6 +32,8 @@ export class WebcamRecorder {
     }
     // first line ties the .jsonl clock (t) to the start of the video
     window.api.webcamRecorder.line(JSON.stringify({ type: 'recording', t, video: `${base}.webm` }))
+    // resolves however the recorder stops: stop() below, or by itself when the camera tracks end
+    this.stopped = new Promise((resolve) => (recorder.onstop = () => resolve()))
     recorder.start(CHUNK_MS)
     this.recorder = recorder
     return base
@@ -45,10 +48,8 @@ export class WebcamRecorder {
     const recorder = this.recorder
     if (!recorder) return null
     this.recorder = null
-    await new Promise<void>((resolve) => {
-      recorder.onstop = () => resolve()
-      recorder.stop()
-    })
+    if (recorder.state !== 'inactive') recorder.stop()
+    await this.stopped
     await this.pending
     return window.api.webcamRecorder.stop()
   }

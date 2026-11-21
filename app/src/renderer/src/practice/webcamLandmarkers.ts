@@ -6,7 +6,7 @@ import { FaceLandmarker, HandLandmarker, PoseLandmarker } from '@mediapipe/tasks
 import wasmLoaderPath from '@mediapipe/tasks-vision/vision_wasm_internal.js?url'
 import wasmBinaryPath from '@mediapipe/tasks-vision/vision_wasm_internal.wasm?url'
 
-import type { FaceData, FrameMessage, HandData, Point3, PoseLandmark } from './protocol'
+import type { FaceData, FrameMessage, HandData, Point3, PoseLandmark } from './webcamProtocol'
 
 // the package doesn't export its WasmFileset type
 const WASM: Parameters<typeof PoseLandmarker.createFromOptions>[0] = {

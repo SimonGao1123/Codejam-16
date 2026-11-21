@@ -41,7 +41,13 @@ export function usePracticeSession() {
     setPending(camera || microphone)
 
     const devices = [
-      { enabled: camera, name: 'Camera', constraints: { video: true }, setStream: setCameraStream },
+      {
+        enabled: camera,
+        name: 'Camera',
+        // 720p: better pose / hand / face tracking, and fills the 16:9 preview
+        constraints: { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
+        setStream: setCameraStream
+      },
       {
         enabled: microphone,
         name: 'Microphone',
