@@ -126,6 +126,15 @@ class AudioAnalyzer:
         })
         return out
 
+    def script_match(self):
+        """0-1: how much of the script was covered, for the final score.
+        None when there's no script, or the comparison model never loaded."""
+        t = self.script_tracker
+        if not t or not t.chunks:
+            return None
+        covered = [i for i in range(t.position + 1) if i not in t.skipped]
+        return len(covered) / len(t.chunks)
+    
     def _configure_voice(self):
         v = self.voice
         for rule_id, alert_rule, attr in (("volume", v.volume_spike, "volume_jump_db"),
