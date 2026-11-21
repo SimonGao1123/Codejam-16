@@ -13,11 +13,11 @@ when one stays past its threshold:
   - hand angle (per hand)            -> shown next to each wrist, no alert
 
 Calibration: stand the way you normally present, looking at the camera, with
-your hands in their resting position, then click "Calibrate" (or press c). It
-records your measurements for a couple of seconds and alerts when you drift too
-far from them. Hands resting at that spot for ~10 s also counts as not using
-them. Posture and eye-level alerts stay off until you calibrate; the other hand
-alerts work right away.
+your hands in their resting position, then click "Calibrate" (or press c). After
+a 2 s countdown to get into position, it records your measurements for 2 s and
+alerts when you drift too far from them. Hands resting at that spot for ~10 s
+also counts as not using them. Posture and eye-level alerts stay off until you
+calibrate; the other hand alerts work right away.
 
 Run:   uv run webcam_test.py
        uv run webcam_test.py --camera 1     (if the wrong camera opens)
@@ -88,7 +88,8 @@ REPEAT_DETREND_S = 3.0      # moving average subtracted before the check; >= lon
 # Finger points tracked relative to the wrist, in hand lengths (wrist -> middle knuckle):
 # thumb, index, middle and pinky tips + middle knuckle (hand orientation / wrist bend).
 FINGER_POINTS = (4, 8, 12, 20, 9)
-CALIBRATE_S = 2.0           # calibration records this long and keeps the median of each measurement
+CALIBRATE_DELAY_S = 2.0     # after clicking Calibrate, wait this long so you can get into position
+CALIBRATE_S = 2.0           # calibration then records this long and keeps the median of each measurement
 BUTTON = (12, -60, 230, -16)  # calibrate button: x0, y0, x1, y1 (negative y = from frame bottom)
 
 GREEN, YELLOW, RED, WHITE = (80, 200, 80), (0, 200, 255), (60, 60, 230), (255, 255, 255)
@@ -307,29 +308,47 @@ def draw_button(frame, text, active):
     cv2.putText(frame, text, (x0 + 12, y1 - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
 
 
+def draw_countdown(frame, n):
+    """Large countdown number in the middle of the frame, readable from a few steps back."""
+    h, w = frame.shape[:2]
+    text = str(n)
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 5, 12)
+    org = ((w - tw) // 2, (h + th) // 2)
+    cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 0), 20)
+    cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 5, YELLOW, 12)
+
+
 class Calibration:
-    """Records each measurement for CALIBRATE_S after start(), then keeps the medians as the baseline."""
+    """After start(), waits CALIBRATE_DELAY_S, records each measurement for CALIBRATE_S, then keeps
+    the medians as the baseline."""
 
     KEYS = ("tilt", "pitch", "eyes")              # required
     OPTIONAL = ("rest_l", "rest_r")               # resting wrist (x, y); None if resting out of frame
 
     def __init__(self):
         self.baseline = None          # {"tilt": deg, "pitch": deg, "eyes": score, "rest_l"/"rest_r": (x, y) or None}
+        self.begins = None            # recording starts at this time (after the get-into-position pause)
         self.until = None             # recording ends at this time
         self.samples = {}
         self.message = "Stand normally, look at the camera, then calibrate"
 
     def start(self, now):
-        self.until = now + CALIBRATE_S
+        self.begins = now + CALIBRATE_DELAY_S
+        self.until = self.begins + CALIBRATE_S
         self.samples = {k: [] for k in self.KEYS + self.OPTIONAL}
 
     @property
     def recording(self):
+        """True for the whole calibration, including the pause before recording."""
         return self.until is not None
+
+    def waiting(self, now):
+        """True during the get-into-position pause."""
+        return self.recording and now < self.begins
 
     def add(self, now, **values):
         """Feed this frame's measurements (None = not seen). Returns True when recording just finished."""
-        if not self.recording:
+        if not self.recording or self.waiting(now):
             return False
         for k, v in values.items():
             if v is not None:
@@ -503,11 +522,16 @@ def main():
             for i, text in enumerate(shown):
                 banner(frame, i, text)
 
+        if calib.waiting(now):
+            calib.message = "Get into position - stand normally, hands at rest, look at the camera"
+            draw_countdown(frame, math.ceil(calib.begins - now))
+            draw_button(frame, f"Get ready... {calib.begins - now:.1f}s", active=True)
+        elif calib.recording:
+            calib.message = "Recording calibration - hold still"
+            draw_button(frame, f"Hold still... {calib.until - now:.1f}s", active=True)
         y += 26
         label(frame, y, calib.message, GREEN if calib.baseline else YELLOW)
-        if calib.recording:
-            draw_button(frame, f"Hold still... {calib.until - now:.1f}s", active=True)
-        else:
+        if not calib.recording:
             draw_button(frame, "Recalibrate (c)" if calib.baseline else "Calibrate (c)", active=False)
         clicked["rect"] = button_rect(frame)
 
@@ -517,7 +541,6 @@ def main():
             break
         if (key == ord("c") or clicked["calibrate"]) and not calib.recording:
             calib.start(now)
-            calib.message = "Recording calibration - stand normally, hands at rest, look at the camera"
         clicked["calibrate"] = False
 
     cap.release()
