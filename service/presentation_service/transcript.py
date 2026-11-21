@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 # ---------- settings ----------
 SR = 16000
+FRAME = 480                  # 30 ms: the frame size audio_analysis.py feeds in (any size works)
 CHUNK = 1600                 # 0.1 s: incoming frames are batched to this size before Moonshine
 UPDATE_INTERVAL = 0.5        # how often Moonshine refreshes its partial text (seconds)
 
