@@ -35,6 +35,8 @@ export default function Practice(): React.JSX.Element {
           pending={pending}
           running={running || session.preparing}
           logWebcam={session.logWebcam}
+          wpm={speech.wpm}
+          wpmUpdatedAt={speech.wpmUpdatedAt}
         >
           <MicrophoneMeter micStream={micStream} pending={pending && microphone} />
         </CameraPreview>

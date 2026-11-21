@@ -10,6 +10,8 @@ type Props = {
   pending: boolean
   running: boolean
   logWebcam: (message: ClientMessage) => void
+  wpm: number | null
+  wpmUpdatedAt: number | null
   children: ReactNode
 }
 
@@ -19,6 +21,8 @@ export default function CameraPreview({
   pending,
   running,
   logWebcam,
+  wpm,
+  wpmUpdatedAt,
   children
 }: Props): React.JSX.Element {
   const webcam = useRef<WebcamHandle>(null)
@@ -41,7 +45,13 @@ export default function CameraPreview({
         <span>{cameraStream ? 'Camera on' : pending && camera ? 'Connecting' : 'Camera off'}</span>
       </div>
       <div className="ph-video">
-        <WebcamView ref={webcam} stream={cameraStream} onStatus={setStatus} />
+        <WebcamView
+          ref={webcam}
+          stream={cameraStream}
+          wpm={wpm}
+          wpmUpdatedAt={wpmUpdatedAt}
+          onStatus={setStatus}
+        />
         {!cameraStream && (
           <div className="ph-video-empty">
             <span className="ph-camera-icon" aria-hidden="true" />

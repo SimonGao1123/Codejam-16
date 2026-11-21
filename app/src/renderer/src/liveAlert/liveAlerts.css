@@ -172,6 +172,55 @@ body,
   gap: 16px;
   margin-top: 14px;
 }
+.la-pace-settings {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #39344d;
+}
+.la-pace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.la-pace-heading h3 {
+  margin-bottom: 12px;
+}
+.la-pace-heading input {
+  appearance: none;
+  width: 32px;
+  height: 18px;
+  margin: 0 0 12px;
+  border: 1px solid #85809b;
+  border-radius: 20px;
+  background: #444055;
+  cursor: pointer;
+}
+.la-pace-heading input::before {
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 2px;
+  border-radius: 50%;
+  background: #f2f0fa;
+  content: '';
+}
+.la-pace-heading input:checked {
+  border-color: #bda8ff;
+  background: #bda8ff;
+}
+.la-pace-heading input:checked::before {
+  transform: translateX(14px);
+  background: #251948;
+}
+.la-pace-settings p {
+  margin: 8px 0 0;
+  color: #c4bfda;
+  font-size: 12px;
+}
+.la-pace-cooldown {
+  margin-top: 14px;
+}
 .la-styles {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

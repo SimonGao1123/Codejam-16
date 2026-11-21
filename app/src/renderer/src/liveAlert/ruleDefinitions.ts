@@ -13,6 +13,7 @@ type RuleDefinition = {
   instant?: boolean // fires on a single event (a filler word): no minimum duration
   // threshold slider; rules without one just turn on/off
   unit?: string
+  label?: string
   min?: number
   max?: number
   step?: number
@@ -31,6 +32,20 @@ export const rules = [
     value: 8,
     duration: 0.3,
     cooldown: 3
+  },
+  {
+    id: 'pace',
+    group: 'Voice',
+    name: 'Speaking pace',
+    cue: 'Pick up the pace',
+    unit: 'words per minute',
+    min: 80,
+    max: 200,
+    value: 140,
+    duration: 0,
+    cooldown: 5,
+    instant: true,
+    label: 'Target pace'
   },
   {
     id: 'pitch',

@@ -125,6 +125,8 @@ async def audio_connection(ws, session):
                         filler_counts=transcript["fillers"] if session.audio.has_speech_samples else None,
                         voice_incidents=session.audio.voice_incidents,
                         body_incidents=body_incidents,
+                        pace=session.audio.pace_summary(),
+                        pace_target_wpm=session.audio.pace_target_wpm(),
                     )
                     checkpoints = []
                     if started_at is not None:

@@ -29,6 +29,13 @@ BODY_RULES = {
     "fast": (0.25, 1, "Slow down quick hand movements so each gesture has a clear purpose."),
 }
 MAX_SCORE = FILLER_MAX_POINTS + sum(rule[1] for rule in (*VOICE_RULES.values(), *BODY_RULES.values()))
+PACE_MAX_POINTS = 4
+# Presentation guidance varies with context.  A 140 WPM centre and a 40 WPM
+# comfortable band are sensible defaults; the centre is configurable in the UI.
+PACE_COMFORT_BAND_WPM = 40
+PACE_ZERO_CREDIT_DISTANCE_WPM = 60
+PACE_CONSISTENT_CV = 0.15
+PACE_INCONSISTENT_CV = 0.45
 
 
 def _count(value: int) -> int:
@@ -63,11 +70,55 @@ def _incident_category(counts: Mapping[str, int] | None, rules: dict) -> dict:
     return _category(checks)
 
 
+def _pace_category(pace: Mapping[str, object] | None, target_wpm: float) -> dict:
+    """Score a moderate average pace (2 pts) and a steady pace (2 pts)."""
+    if pace is None:
+        return _category({})
+    average = pace.get("average_wpm")
+    samples = pace.get("segment_wpms")
+    if not isinstance(average, (int, float)) or average <= 0:
+        return _category({})
+    target = min(200, max(80, float(target_wpm)))
+    distance = abs(float(average) - target)
+    beyond_band = max(0, distance - PACE_COMFORT_BAND_WPM)
+    moderate_deduction = 2 * min(1, beyond_band / (PACE_ZERO_CREDIT_DISTANCE_WPM - PACE_COMFORT_BAND_WPM))
+    low, high = target - PACE_COMFORT_BAND_WPM, target + PACE_COMFORT_BAND_WPM
+    checks = {
+        "moderate_pace": {
+            "count": 0,
+            "max_points": 2,
+            "deduction": round(moderate_deduction, 2),
+            "feedback": (f"Aim for about {target:g} WPM ({low:g}–{high:g} WPM is the target range)."
+                         if moderate_deduction else None),
+            "average_wpm": round(float(average), 1),
+            "target_wpm": target,
+        }
+    }
+    valid_samples = [float(rate) for rate in samples] if isinstance(samples, list) and all(
+        isinstance(rate, (int, float)) and rate > 0 for rate in samples
+    ) else []
+    if len(valid_samples) >= 2:
+        mean = sum(valid_samples) / len(valid_samples)
+        cv = (sum((rate - mean) ** 2 for rate in valid_samples) / len(valid_samples)) ** 0.5 / mean
+        inconsistent = max(0, cv - PACE_CONSISTENT_CV)
+        consistency_deduction = 2 * min(1, inconsistent / (PACE_INCONSISTENT_CV - PACE_CONSISTENT_CV))
+        checks["consistent_pace"] = {
+            "count": len(valid_samples),
+            "max_points": 2,
+            "deduction": round(consistency_deduction, 2),
+            "feedback": "Keep a steadier pace from one part of the presentation to the next."
+                        if consistency_deduction else None,
+        }
+    return _category(checks)
+
+
 def score_presentation(
     *,
     filler_counts: Mapping[str, int] | None = None,
     voice_incidents: Mapping[str, int] | None = None,
     body_incidents: Mapping[str, int] | None = None,
+    pace: Mapping[str, object] | None = None,
+    pace_target_wpm: float = 140,
 ) -> dict:
     """Return a JSON-ready score out of 20, category breakdown, and ordered tips.
 
@@ -76,7 +127,7 @@ def score_presentation(
     reported separately because those detections are unconfirmed.
 
     The complete rubric allocates 6 points for fillers, 3 for voice tone,
-    and 11 for body language. The score uses the available points as its
+    4 for speaking pace, and 11 for body language. The score uses the available points as its
     denominator. measured_points shows how much of the rubric was evaluated.
     With no measured data, score is None.
     """
@@ -96,6 +147,7 @@ def score_presentation(
     categories = {
         "filler": _category(filler_checks),
         "voice_tone": _incident_category(voice_incidents, VOICE_RULES),
+        "speaking_pace": _pace_category(pace, pace_target_wpm),
         "body_language": _incident_category(body_incidents, BODY_RULES),
     }
     measured_points = sum(category["max_points"] for category in categories.values())
@@ -109,9 +161,9 @@ def score_presentation(
     ]
     feedback.sort(key=lambda tip: tip["deduction"], reverse=True)
     return {
-        "score": round(MAX_SCORE * (measured_points - deducted) / measured_points, 2)
+        "score": round((MAX_SCORE + PACE_MAX_POINTS) * (measured_points - deducted) / measured_points, 2)
         if measured_points else None,
-        "max_score": MAX_SCORE,
+        "max_score": MAX_SCORE + PACE_MAX_POINTS,
         "measured_points": measured_points,
         "categories": categories,
         "feedback": feedback,

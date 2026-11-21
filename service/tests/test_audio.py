@@ -66,18 +66,90 @@ def test_quiet_alert_posts_to_board(stt_model):
     assert "Speak up" in board.active()
 
 
-def test_repeated_fillers_cost_more_in_twenty_point_rubric():
+def test_repeated_fillers_cost_more_in_twenty_four_point_rubric():
     voice = dict.fromkeys(VOICE_RULES, 0)
     body = dict.fromkeys(BODY_RULES, 0)
     result = score_presentation(filler_counts={"um": 8, "filler?": 5},
                                 voice_incidents=voice, body_incidents=body)
-    assert result["max_score"] == result["measured_points"] == 20
-    assert result["score"] == 15
+    # Pace was not available, so the existing checks are normalized to the
+    # full 24-point rubric while measured_points reports what was assessed.
+    assert result["max_score"] == 24
+    assert result["measured_points"] == 20
+    assert result["score"] == 18
     assert result["categories"]["voice_tone"]["max_points"] == 3
     assert result["categories"]["body_language"]["max_points"] == 11
     assert score_presentation(filler_counts={"um": 100})["score"] == 0
 
 
+def test_pace_scores_moderate_delivery_and_consistency():
+    steady = score_presentation(pace={"average_wpm": 140, "segment_wpms": [135, 145, 140]})
+    assert steady["categories"]["speaking_pace"]["points"] == 4
+    assert steady["max_score"] == 24
+    assert steady["score"] == 24
+
+    rushed = score_presentation(pace={"average_wpm": 210, "segment_wpms": [100, 190, 240]})
+    checks = rushed["categories"]["speaking_pace"]["checks"]
+    assert checks["moderate_pace"]["deduction"] == 2
+    assert checks["consistent_pace"]["deduction"] > 0
+
+
+def test_pace_is_not_scored_without_enough_transcript_data():
+    assert score_presentation(pace=None)["categories"]["speaking_pace"]["points"] is None
+
+
+def test_current_wpm_uses_recent_timed_words(vosk_model):
+    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+    analyzer.transcriber.word_times = [(i * 0.5, i * 0.5 + 0.2) for i in range(20)]
+    assert analyzer.current_wpm() == pytest.approx(123.7, abs=0.1)
+
+
+def test_live_wpm_uses_partial_transcript_history(vosk_model):
+    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+    analyzer.transcriber.pace_history.extend([(0, 0), (4, 8), (8, 18)])
+    analyzer.transcriber.last_voiced_at = 8
+    assert analyzer.transcriber.live_wpm() == 135
+
+
+def test_live_wpm_is_unavailable_during_a_pause(vosk_model):
+    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+    analyzer.transcriber.pace_history.extend([(0, 0), (4, 8), (8, 18)])
+    analyzer.transcriber.last_voiced_at = 6
+    assert analyzer.transcriber.live_wpm() is None
+
+
+def test_final_pace_excludes_a_presentation_pause(vosk_model):
+    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+    # Two ten-word phrases at the same rate, separated by a five-second pause.
+    # The pause must not be counted as slow speech in the final pace score.
+    analyzer.transcriber.word_times = [
+        *((i * 0.5, i * 0.5 + 0.2) for i in range(10)),
+        *((10 + i * 0.5, 10 + i * 0.5 + 0.2) for i in range(10)),
+    ]
+    assert analyzer.pace_summary()["average_wpm"] == pytest.approx(127.7, abs=0.1)
+
+
+@pytest.mark.parametrize(
+    ("seconds_per_word", "expected_alert"),
+    [
+        (0.7, "Pick up the pace"),
+        (0.25, "Slow down"),
+    ],
+)
+def test_out_of_range_pace_posts_the_matching_live_alert(
+    vosk_model, seconds_per_word, expected_alert
+):
+    board = AlertBoard()
+    analyzer = AudioAnalyzer(vosk_model, None, board)
+    # Forty words provide enough active speech for a reliable live estimate.
+    analyzer.transcriber.word_times = [
+        (i * seconds_per_word, i * seconds_per_word + 0.1) for i in range(40)
+    ]
+    analyzer.check_pace()
+    assert expected_alert in board.active()
+
+
+def test_session_score_has_recording_relative_checkpoints(vosk_model):
+    session = Session(vosk_model)
 def test_session_score_has_recording_relative_checkpoints(stt_model):
     session = Session(stt_model)
     session.audio.set_embedder(lambda texts: np.ones((len(texts), 1), dtype=np.float32))

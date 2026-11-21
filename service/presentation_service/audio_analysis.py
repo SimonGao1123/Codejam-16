@@ -21,6 +21,8 @@ VOICE_RULES = {VoiceMonitor.VOLUME_SPIKE: ("volume", "volume_spike"),
 SCRIPT_RULES = {"jump": "out_of_order", "back": "out_of_order", "off_topic": "off_script",
                 "stuck": "stuck"}             # script event kind -> Live alerts rule id
 SCRIPT_CHECK_S = 1.5            # compare the transcript with the script at most this often
+PACE_COMFORT_BAND_WPM = 40       # matches the scoring rubric's full-credit band
+PACE_PAUSE_BREAK_S = 1           # deliberate presentation pauses do not lower the final pace score
 
 
 class AudioAnalyzer:
@@ -227,6 +229,7 @@ class AudioAnalyzer:
         self.voice_pos -= done
         self.speech_pos -= done
 
+        self.check_pace()
         if transcript_changed:
             out.append(self.transcript_message(new_sentences, new_fillers))
         if self.script_chunks:
@@ -238,6 +241,97 @@ class AudioAnalyzer:
         sentences, fillers = [], []
         self.collect(self.transcriber.flush(), sentences, fillers)
         return [self.transcript_message(sentences, fillers, partial="")] + self.check_script(force=True)
+
+    def pace_summary(self):
+        """Return speaking-rate data for the final score, or None when it is too short.
+
+        A new speaking run starts after a two-second gap.  That keeps natural pauses
+        between slides or ideas from making an otherwise measured delivery look slow.
+        Each run is split into roughly 20-word samples for the consistency check.
+        """
+        words = self.transcriber.word_times
+        if len(words) < 20:
+            return None
+
+        runs, run = [], [words[0]]
+        for word in words[1:]:
+            if word[0] - run[-1][1] > PACE_PAUSE_BREAK_S:
+                runs.append(run)
+                run = [word]
+            else:
+                run.append(word)
+        runs.append(run)
+
+        def wpm(part):
+            duration = part[-1][1] - part[0][0]
+            return len(part) * 60 / duration if duration >= 1 else None
+
+        durations = [part[-1][1] - part[0][0] for part in runs]
+        active_seconds = sum(durations)
+        if active_seconds < 8:
+            return None
+        average = len(words) * 60 / active_seconds
+        samples = []
+        for part in runs:
+            for i in range(0, len(part), 20):
+                sample = part[i:i + 20]
+                # A short final fragment is too noisy to judge consistency.
+                if len(sample) >= 8 and (rate := wpm(sample)) is not None:
+                    samples.append(rate)
+        return {
+            "average_wpm": round(average, 1),
+            "segment_wpms": [round(rate, 1) for rate in samples],
+            "word_count": len(words),
+        }
+
+    def current_wpm(self):
+        """Recent WPM for the renderer's live stat, based on up to 20 timed words."""
+        words = self.transcriber.word_times
+        if len(words) < 3:
+            return None
+        # Do not carry a slide-change pause into the live pace readout.
+        start = max(0, len(words) - 20)
+        for i in range(len(words) - 1, start, -1):
+            if words[i][0] - words[i - 1][1] > 2:
+                start = i
+                break
+        recent = words[start:]
+        duration = recent[-1][1] - recent[0][0]
+        if len(recent) < 3 or duration < 1.5:
+            return None
+        return round(len(recent) * 60 / duration, 1)
+
+    def live_wpm(self):
+        """Fast Vosk-partial estimate for the overlay; None while the speaker is paused."""
+        return self.transcriber.live_wpm()
+
+    def pace_target_wpm(self):
+        """Preferred WPM from the shared settings, with a safe default."""
+        target = self.settings.get("pace", {}).get("threshold", 140)
+        try:
+            return min(200, max(80, float(target)))
+        except (TypeError, ValueError):
+            return 140.0
+
+    def check_pace(self):
+        """Post a live cue after each finalized transcript update when pace is out of range."""
+        # A short, responsive window makes the cue useful while the speaker can
+        # still adjust. It does not run during silence (live_wpm returns None).
+        pace = self.transcriber.live_wpm(minimum_seconds=3, window_seconds=5)
+        if pace is None:
+            # Keep a fallback for timing-only callers/tests; real sessions have
+            # pace_history, and must not alert while the speaker is paused.
+            if self.transcriber.pace_history:
+                return
+            summary = self.pace_summary()
+            if summary is None:
+                return
+            pace = summary["average_wpm"]
+        target = self.pace_target_wpm()
+        if pace < target - PACE_COMFORT_BAND_WPM:
+            self.post_rule("pace", "Pick up the pace")
+        elif pace > target + PACE_COMFORT_BAND_WPM:
+            self.post_rule("pace", "Slow down")
 
     def _recording_clock(self, sample):
         """Convert an analyzer sample offset to the renderer's monotonic clock."""
@@ -272,6 +366,7 @@ class AudioAnalyzer:
             "captured_at": captured_at,
             "pitch_hz": round(v.latest_pitch_hz, 1) if v.latest_pitch_hz else None,
             "pitches": pitches,                     # one per 50 ms block, oldest first (for the graph)
+            "wpm": self.live_wpm(),                 # provisional Vosk-partial estimate for the overlay
             "volume_dbfs": round(float(v.latest_volume_dbfs), 1),
             # reference pitch for the graph, and the pitch where a spike alert would fire
             "typical_hz": round(float(v.typical_pitch_hz), 1) if v.typical_pitch_hz else None,

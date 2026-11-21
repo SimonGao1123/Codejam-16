@@ -3,6 +3,7 @@ import type { SessionScoreMessage } from '../audio/audioProtocol'
 const CATEGORY_LABELS = {
   filler: 'Filler words',
   voice_tone: 'Voice tone',
+  speaking_pace: 'Speaking pace',
   body_language: 'Body language'
 } as const
 
@@ -22,16 +23,22 @@ export default function SessionResults({
       ) : (
         <>
           <dl className="ph-results-breakdown">
-            {Object.entries(result.categories).map(([category, breakdown]) => (
-              <div key={category}>
-                <dt>{CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS]}</dt>
-                <dd>
-                  {breakdown.points === null
-                    ? 'Not measured'
-                    : `${breakdown.points} / ${breakdown.max_points}`}
-                </dd>
-              </div>
-            ))}
+            {Object.entries(result.categories).map(([category, breakdown]) => {
+              const pace = breakdown.checks.moderate_pace
+              return (
+                <div key={category}>
+                  <dt>{CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS]}</dt>
+                  <dd>
+                    {breakdown.points === null
+                      ? 'Not measured'
+                      : `${breakdown.points} / ${breakdown.max_points}`}
+                    {pace?.average_wpm !== undefined && (
+                      <small> · {pace.average_wpm} WPM (target {pace.target_wpm} WPM)</small>
+                    )}
+                  </dd>
+                </div>
+              )
+            })}
           </dl>
           {result.measured_points < result.max_score && (
             <p>Score based on {result.measured_points} of {result.max_score} possible rubric points.</p>
