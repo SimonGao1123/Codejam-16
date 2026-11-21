@@ -6,6 +6,8 @@ export default defineConfig({
   main: {},
   preload: {},
   renderer: {
+    // MediaPipe .task models are served from the repo-level models/ folder (e.g. /pose.task)
+    publicDir: resolve('../models'),
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src')
