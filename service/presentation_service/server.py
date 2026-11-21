@@ -16,7 +16,6 @@ import struct
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import numpy as np
 from websockets.asyncio.server import serve
@@ -24,15 +23,11 @@ from websockets.asyncio.server import serve
 from .audio_analysis import AudioAnalyzer
 from .scoring import score_presentation
 from .script_compare import Embedder
-from .transcript import load_vosk, load_whisper
+from .transcript import load_moonshine
 from .webcam_analysis import WebcamAnalyzer
 
 log = logging.getLogger("presentation_service")
 
-REPO = Path(__file__).resolve().parents[2]
-VOSK_MODEL = REPO / "models" / "vosk-model-en-us-0.22"
-if not (VOSK_MODEL / "am" / "final.mdl").is_file():
-    VOSK_MODEL = REPO / "experiments" / "gap_heuristic" / "vosk-model-small-en-us-0.15"
 ALERT_SHOW_S = 2.5          # how long a voice / filler alert banner stays up
 AUDIO_TIMESTAMP = struct.Struct("<d")
 
@@ -56,12 +51,12 @@ class AlertBoard:
 
 
 class Session:
-    def __init__(self, vosk_model):
+    def __init__(self, moonshine_model):
         self.alerts = AlertBoard()
         self.webcam = WebcamAnalyzer()
-        self.audio = AudioAnalyzer(vosk_model, None, self.alerts)
+        self.audio = AudioAnalyzer(moonshine_model, self.alerts)
         self.scoring_client = None
-        # audio work (Vosk, Whisper) runs on one worker thread, in order, off the event loop
+        # audio work (Moonshine, voice analysis) runs on one worker thread, in order, off the event loop
         self.audio_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="audio")
 
     def apply_settings(self, rules):
@@ -153,20 +148,10 @@ async def audio_connection(ws, session):
         log.info("audio client disconnected")
 
 
-async def main(host="127.0.0.1", port=8766, whisper_model="tiny.en"):
-    log.info("loading Vosk model from %s", VOSK_MODEL)
-    session = Session(load_vosk(VOSK_MODEL))
-
-    if whisper_model:
-        # Whisper only double-checks suspected um/uh; load it in the background so the service
-        # starts right away (the first run downloads the model, ~75 MB for tiny.en)
-        def load():
-            try:
-                session.audio.set_whisper(load_whisper(whisper_model))
-                log.info("Whisper %s ready (filler second opinion on)", whisper_model)
-            except Exception as err:                 # offline on first run, etc.
-                log.warning("Whisper unavailable (%s); suspected fillers will show as [um?]", err)
-        threading.Thread(target=load, daemon=True).start()
+async def main(host="127.0.0.1", port=8766):
+    # Moonshine runs fully on-device; the first run downloads the model, so it can take a while
+    log.info("loading Moonshine model (downloaded on first run)")
+    session = Session(load_moonshine())
 
     # the script comparison model (all-MiniLM-L6-v2, ~90 MB download on first run), also in the
     # background; a script that arrives before it's ready starts being tracked once it is

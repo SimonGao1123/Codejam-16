@@ -12,6 +12,8 @@ dependencies = [
     "vosk<0.3.45",
     "pyaudio>=0.2.14",
     "webrtcvad-wheels>=2.0.14.post1",
+    "moonshine-voice",
+    "noisereduce",
 ]
 
 [tool.uv]
