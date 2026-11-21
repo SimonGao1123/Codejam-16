@@ -1,0 +1,130 @@
+import shutil
+import subprocess
+import wave
+
+import numpy as np
+import pytest
+
+from presentation_service.audio_analysis import AudioAnalyzer
+from presentation_service.server import VOSK_MODEL, AlertBoard
+from presentation_service.transcript import load_vosk
+
+SR = 16000
+
+
+@pytest.fixture(scope="module")
+def vosk_model():
+    return load_vosk(VOSK_MODEL)
+
+
+def feed_all(analyzer, samples, chunk=2048):
+    """Feeds audio in Electron-sized chunks; returns every message sent back."""
+    out = []
+    for i in range(0, len(samples), chunk):
+        out += analyzer.feed(samples[i:i + chunk].astype(np.float32))
+    return out
+
+
+def say(text, tmp_path):
+    """macOS text-to-speech -> 16 kHz float32 samples."""
+    if not shutil.which("say"):
+        pytest.skip("needs macOS `say`")
+    path = tmp_path / "speech.wav"
+    subprocess.run(["say", "-o", str(path), "--data-format=LEI16@16000", text], check=True)
+    with wave.open(str(path)) as w:
+        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
+    return pcm.astype(np.float32) / 32768.0
+
+
+def test_tone_gives_pitch_and_volume(vosk_model):
+    t = np.arange(SR * 2) / SR
+    tone = 0.2 * np.sin(2 * np.pi * 200 * t)
+    msgs = [m for m in feed_all(AudioAnalyzer(vosk_model, None, AlertBoard()), tone) if m["type"] == "voice"]
+    assert len(msgs) == 20                                      # every 100 ms
+    assert all(len(m["pitches"]) == 2 for m in msgs)            # both 50 ms readings in each
+    assert abs(msgs[-1]["pitch_hz"] - 200) < 5 and -20 < msgs[-1]["volume_dbfs"] < -10
+    # after ~1 s of voice the running typical pitch exists; a spike fires 9 semitones above it
+    assert msgs[0]["typical_hz"] is None and abs(msgs[-1]["typical_hz"] - 200) < 5
+    assert abs(msgs[-1]["spike_hz"] - msgs[-1]["typical_hz"] * 2 ** (9 / 12)) < 0.5
+
+
+def test_voice_calibration_from_speechlike_tone(vosk_model):
+    a = AudioAnalyzer(vosk_model, None, AlertBoard())
+    a.request_calibration()
+    t = np.arange(SR * 4) / SR
+    msgs = feed_all(a, 0.2 * np.sin(2 * np.pi * 180 * t))
+    assert msgs[-1]["calibrated"] and "Voice calibrated: 180 Hz" in msgs[-1]["message"]
+
+
+def test_quiet_alert_posts_to_board(vosk_model):
+    board = AlertBoard()
+    feed_all(AudioAnalyzer(vosk_model, None, board), np.zeros(SR * 4, dtype=np.float32))
+    assert "Speak up" in board.active()
+
+
+def test_transcript_and_filler_counts_from_speech(vosk_model, tmp_path):
+    speech = say("So I think, you know, the results are like really good. So that is the plan.", tmp_path)
+    board = AlertBoard()
+    a = AudioAnalyzer(vosk_model, None, board)
+    msgs = feed_all(a, np.concatenate([speech, np.zeros(SR, dtype=np.float32)]))
+    msgs += a.finish()
+    transcripts = [m for m in msgs if m["type"] == "transcript"]
+    sentences = [s for m in transcripts for s in m["new_sentences"]]
+    text = " ".join(sentences).lower()
+    assert "results" in text and "plan" in text
+    assert any(m["partial"] for m in transcripts)               # running words while "talking"
+    final = transcripts[-1]
+    assert final["fillers"]["you know"] >= 1 and final["fillers"]["so"] >= 1 and final["fillers"]["like"] >= 1
+    assert final["total"] == sum(final["fillers"].values())
+    assert {"Filler: you know", "Filler: like", "Filler: so"} <= set(board.active())
+    print("\n", sentences, final["fillers"])
+
+
+def test_filler_counts_go_up_before_the_sentence_ends(vosk_model, tmp_path):
+    speech = say("I really like this idea and I like the plan", tmp_path)       # no pause: stays partial
+    a = AudioAnalyzer(vosk_model, None, AlertBoard())
+    msgs = [m for m in feed_all(a, speech) if m["type"] == "transcript"]
+    assert not any(m["new_sentences"] for m in msgs)                           # sentence not finished yet
+    assert msgs[-1]["fillers"]["like"] == 2 and msgs[-1]["total"] == 2
+    final = a.finish()[0]
+    assert final["fillers"]["like"] == 2                                       # not double-counted at the end
+
+
+def voice_rules(**changes):
+    base = {r: {"enabled": True, "threshold": th, "duration": d, "cooldown": 3}
+            for r, th, d in (("volume", 8, 0.3), ("pitch", 9, 0.2), ("quiet", 15, 3))}
+    base["filler"] = {"enabled": True, "threshold": None, "duration": 0, "cooldown": 0}
+    for rule_id, change in changes.items():
+        base[rule_id] = {**base[rule_id], **change}
+    return base
+
+
+def test_voice_settings_disable_and_retime_quiet_alert(vosk_model):
+    silence = np.zeros(SR * 4, dtype=np.float32)
+    board = AlertBoard()
+    a = AudioAnalyzer(vosk_model, None, board)
+    a.apply_settings(voice_rules(quiet={"enabled": False}))
+    feed_all(a, silence)
+    assert "Speak up" not in board.active()
+
+    board = AlertBoard()
+    a = AudioAnalyzer(vosk_model, None, board)
+    a.apply_settings(voice_rules(quiet={"duration": 10}))       # longer than the 4 s of silence
+    feed_all(a, silence)
+    assert "Speak up" not in board.active()
+
+
+def test_voice_threshold_and_settings_survive_new_session(vosk_model):
+    a = AudioAnalyzer(vosk_model, None, AlertBoard())
+    a.apply_settings(voice_rules(pitch={"threshold": 4}, volume={"threshold": 12}))
+    a.reset()                                                    # new practice session
+    assert a.voice.pitch_jump_semitones == 4 and a.voice.volume_jump_db == 12
+
+
+def test_filler_alert_follows_rule_but_still_counts(vosk_model, tmp_path):
+    speech = say("I like this and I like that", tmp_path)
+    board = AlertBoard()
+    a = AudioAnalyzer(vosk_model, None, board)
+    a.apply_settings(voice_rules(filler={"enabled": False}))
+    msgs = feed_all(a, speech) + a.finish()
+    assert msgs[-1]["fillers"]["like"] == 2 and not any(x.startswith("Filler") for x in board.active())

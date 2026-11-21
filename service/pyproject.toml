@@ -1,0 +1,22 @@
+[project]
+name = "presentation-service"
+version = "0.1.0"
+description = "Local analysis service for the Presentation Helper app: webcam posture/hands/eye level, voice pitch/volume, live transcript + filler words"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "websockets>=13",
+    "numpy",
+    "vosk<0.3.45",
+    "webrtcvad-wheels>=2.0.14.post1",
+    "faster-whisper>=1.1",
+    "av<17",                 # newer PyAV breaks faster-whisper
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

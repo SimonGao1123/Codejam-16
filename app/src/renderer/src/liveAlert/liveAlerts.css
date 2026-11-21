@@ -1,0 +1,245 @@
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  src: url('./BricolageGrotesque.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+.la {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 42px clamp(18px, 5vw, 64px);
+  background: #151722;
+  color: #f2f0fa;
+  font:
+    15px/1.5 'Bricolage Grotesque',
+    system-ui,
+    sans-serif;
+  color-scheme: dark;
+}
+
+.la *,
+.la *::before,
+.la *::after {
+  box-sizing: border-box;
+}
+.la button {
+  font: inherit;
+  cursor: pointer;
+}
+.la button:focus-visible,
+.la input:focus-visible {
+  outline: 2px solid #d2c1ff;
+  outline-offset: 3px;
+}
+.la-shell {
+  max-width: 1050px;
+  margin: 0 auto;
+}
+.la-header {
+  margin-bottom: 28px;
+}
+.la-header p {
+  margin: 0;
+  color: #c4bfda;
+}
+.la-header .la-product {
+  color: #c9b6ff;
+  font-weight: 650;
+}
+.la h1 {
+  margin: 5px 0;
+  font-size: clamp(34px, 6vw, 52px);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.045em;
+}
+.la h2 {
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 700;
+}
+.la h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+.la-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.la-card {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid #38334e;
+  border-radius: 16px;
+  background: #1e2030;
+}
+.la-rules {
+  display: grid;
+  gap: 6px;
+}
+.la .la-group {
+  margin: 8px 0 4px 12px;
+  color: #a79fc4;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.la-rule {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-right: 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+}
+.la-rule[data-selected='true'] {
+  border-color: #51466f;
+  background: #302941;
+}
+.la-rule-name {
+  flex: 1;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.la-rule input {
+  appearance: none;
+  width: 32px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid #85809b;
+  border-radius: 20px;
+  background: #444055;
+  cursor: pointer;
+}
+.la-rule input::before {
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 2px;
+  border-radius: 50%;
+  background: #f2f0fa;
+  content: '';
+}
+.la-rule input:checked {
+  background: #bda8ff;
+  border-color: #bda8ff;
+}
+.la-rule input:checked::before {
+  transform: translateX(14px);
+  background: #251948;
+}
+.la-fields {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #39344d;
+}
+.la-fields label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 8px;
+  font-size: 13px;
+}
+.la-fields label span {
+  color: #d1beff;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.la-fields input[type='range'] {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 0;
+  accent-color: #bda8ff;
+}
+.la-timing {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+.la-styles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #151722;
+}
+.la-styles button {
+  padding: 7px 2px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #c4bfda;
+  font-size: 13px;
+}
+.la-styles button[aria-pressed='true'] {
+  background: #3e3358;
+  color: #fcfaff;
+}
+.la-stage {
+  display: grid;
+  place-items: start end;
+  min-height: 148px;
+  margin: 15px 0;
+  padding: 12px;
+  border: 1px solid #3d3951;
+  border-radius: 10px;
+  background: #181a27;
+}
+.la-stage p {
+  place-self: center;
+  margin: 0;
+  color: #c4bfda;
+  font-size: 13px;
+  text-align: center;
+}
+.la-cue {
+  padding: 9px 12px;
+  border: 1px solid #ecc981;
+  border-radius: 8px;
+  background: #f6d58e;
+  color: #33250d;
+  font-weight: 650;
+}
+.la-cue-banner {
+  justify-self: stretch;
+}
+.la-cue-compact {
+  border-radius: 999px;
+  font-size: 13px;
+}
+.la-preview {
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #c4aeff;
+  color: #231743;
+  font-weight: 650;
+}
+.la-preview:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@media (max-width: 700px) {
+  .la-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
