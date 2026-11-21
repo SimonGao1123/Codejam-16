@@ -9,7 +9,9 @@ dependencies = [
     "sounddevice>=0.5",
     "numpy",
     "av<17",
-    "vosk",
+    "vosk<0.3.45",
+    "pyaudio>=0.2.14",
+    "webrtcvad-wheels>=2.0.14.post1",
 ]
 
 [tool.uv]
