@@ -1,5 +1,5 @@
 """Audio analysis: splits the 16 kHz float32 mic stream from Electron into 50 ms blocks for the
-voice monitor (pitch / volume) and 30 ms frames for the transcriber (Vosk + filler detection).
+voice monitor (pitch / volume) and 30 ms frames for the transcriber (Moonshine + filler detection).
 If the user gave a script, the transcriber's text is then compared with it (script_compare.py):
 no extra audio processing, just the transcript that's already there.
 Message format: docs/audio-protocol.md."""
@@ -26,9 +26,9 @@ PACE_PAUSE_BREAK_S = 1           # deliberate presentation pauses do not lower t
 
 
 class AudioAnalyzer:
-    def __init__(self, vosk_model, whisper_model, alerts):
+    def __init__(self, moonshine_model, alerts):
         self.alerts = alerts                        # shared AlertBoard, shown on the webcam overlay
-        self.transcriber = Transcriber(vosk_model, whisper_model)
+        self.transcriber = Transcriber(moonshine_model)     # from load_moonshine() in transcript.py
         self._calibrate_requested = threading.Event()
         self.settings = {}                          # Live alerts rules, see apply_settings()
         self.last_alert = {}                        # rule id -> time of its last pop-up (cooldowns)
@@ -156,9 +156,6 @@ class AudioAnalyzer:
             self.script_tracker.reset()
             self.last_script_text, self.last_script_check = "", -float("inf")
 
-    def set_whisper(self, model):
-        self.transcriber.whisper = model
-
     def request_calibration(self):
         """Thread-safe: called from the webcam side when the user clicks Calibrate."""
         self._calibrate_requested.set()
@@ -216,7 +213,7 @@ class AudioAnalyzer:
             if self.blocks % VOICE_EVERY_BLOCKS == 0:
                 out.append(self.voice_message())
 
-        # speech: 30 ms frames of int16 for webrtcvad / Vosk
+        # speech: 30 ms frames of int16 for the transcriber (Moonshine batches them internally)
         while self.speech_pos + FRAME <= len(self.pending):
             frame = self.pending[self.speech_pos:self.speech_pos + FRAME]
             self.speech_pos += FRAME
@@ -358,7 +355,7 @@ class AudioAnalyzer:
                 sentences.append(value)
             elif kind == "filler":
                 fillers.append(value)               # always counted; the pop-up follows the rule
-                self.post_rule("filler", f"Filler: {value}" if value != "filler?" else "Filler?")
+                self.post_rule("filler", f"Filler: {value}")
 
     def voice_message(self):
         v, cal = self.voice, self.voice_calibration
@@ -391,5 +388,4 @@ class AudioAnalyzer:
             "new_fillers": new_fillers,
             "fillers": fillers,
             "total": sum(fillers.values()),
-            "wpm": self.live_wpm(),
         }

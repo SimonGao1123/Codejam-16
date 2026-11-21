@@ -1,30 +1,29 @@
 """
-Live transcript with filler-word detection, from experiments/gap_heuristic/SpeechtoText.py.
-Same method, restructured to take audio pushed in from the Electron app instead of reading the mic:
+Live transcript with filler-word detection, restructured to take audio pushed in from the
+Electron app instead of reading the mic. Based on the current Moonshine script:
 
-  - Vosk gives the running transcript (partial words while you talk, a final sentence on a pause)
-    and counts the filler words it writes ("um", "uh", "like", "you know", "so").
-  - Vosk often drops um/uh. Two checks catch those:
-      1. a gap between words where the webrtcvad still heard voice
-      2. a long near-miss word ("a", "im", "ah", ...) that is probably really um/uh
-    Each suspicious clip gets a second opinion from Whisper (prompted to write fillers).
-    Without Whisper, both checks mark "[um?]" instead.
+  - Moonshine streams the transcript (partial text while you talk, a finished line on a pause).
+    It writes "um" and "uh" itself, so fillers are counted straight from its text.
+  - Alerts fire from partial text for speed. Totals come from finished lines only,
+    because partials get revised as more audio arrives.
+  - Optional: pass a noise profile (a couple of seconds of room audio) and each chunk is cleaned
+    with noisereduce before it reaches Moonshine.
+
+Interface is the same as before: feed() / flush() / reset(), returning events like
+("partial", text), ("sentence", text), ("filler", word).
 """
 
-import json
 import logging
 import re
 from collections import deque
 
 import numpy as np
-import webrtcvad
-from vosk import KaldiRecognizer, Model
+from moonshine_voice import Transcriber as MoonshineTranscriber
+from moonshine_voice import TranscriptEventListener, get_model_for_language
 
 log = logging.getLogger(__name__)
 
 # ---------- settings ----------
-FILLERS = ["um", "uh", "like", "you know", "so"]
-
 SR = 16000
 FRAME = 480                  # 480 samples = 30 ms (the size the VAD accepts)
 FRAME_SEC = FRAME / SR       # 0.03 s
@@ -36,101 +35,94 @@ MAX_FRAMES = int(KEEP_SECONDS / FRAME_SEC)
 LIVE_WPM_WINDOW_S = 12       # short enough to react, long enough not to jump word-by-word
 LIVE_WPM_PAUSE_S = 0.8        # show N/A promptly when the speaker has paused
 
-SUSPECT = {"a", "im", "ha", "ah", "on", "huh", "arm", "i'm"}        # near-misses for um/uh
-MIN_DUR = 0.25               # a suspect word this long is probably a filler
+# matched against lowercase text
+FILLER_PATTERNS = {
+    "um": r"\bum\b",
+    "uh": r"\buh\b",
+    "erm": r"\berm\b",
+    "hmm": r"\bhmm\b",
+    "like": r"\blike\b",
+    "you know": r"\byou know\b",
+    "so": r"\bso\b",
+}
+FILLERS = list(FILLER_PATTERNS)
 
-PROMPT = "Umm, let me think, hmm... Okay, so, uh, I think, you know, it's, um, fine."
-FILLER_MAP = {"umm": "um", "um": "um", "uhh": "uh", "uh": "uh",
-              "erm": "um", "er": "uh", "ah": "uh", "hmm": "um", "mm": "um"}
+END_PUNCT = (".", ",", "?", "!")     # don't add a period after any of these
 
 
 def count_fillers(text):
-    return {f: len(re.findall(rf"\b{re.escape(f)}\b", text)) for f in FILLERS}
+    text = text.lower()
+    return {f: len(re.findall(p, text)) for f, p in FILLER_PATTERNS.items()}
 
 
-def sentence_text(tokens):
-    """['so', 'i', 'think', '[um]'] -> 'So I think [um].'"""
-    tokens = tokens[:]
-    for i, t in enumerate(tokens):
-        if not t.startswith("["):             # capitalize the first real word
-            tokens[i] = t.capitalize()
-            break
-    return re.sub(r"\bi\b", "I", " ".join(tokens) + ".")      # lone "i" -> "I" (also i'm, i'll)
+def sentence_text(text):
+    """'so i think um we should go' -> 'So I think um we should go.'"""
+    text = text.strip()
+    if not text:
+        return ""
+    text = text[0].upper() + text[1:]                  # capitalize the first letter only
+    if not text.endswith(END_PUNCT):                   # Moonshine sometimes adds punctuation already
+        text += "."
+    return re.sub(r"\bi\b", "I", text)                 # lone "i" -> "I" (also i'm, i'll)
+
+
+class _Listener(TranscriptEventListener):
+    """Forwards Moonshine's callbacks to the Transcriber that owns the stream."""
+
+    def __init__(self, owner):
+        self.owner = owner
+
+    def on_line_text_changed(self, event):
+        self.owner._on_partial(event.line.text)
+
+    def on_line_completed(self, event):
+        self.owner._on_final(event.line.text, getattr(event.line, "start_time", 0.0))
 
 
 class Transcriber:
     """Feed 30 ms frames of 16 kHz int16 audio; returns transcript events as they happen."""
 
-    def __init__(self, model, whisper=None):
+    def __init__(self, model, noise=None):
+        """model: what load_moonshine() returns.
+        noise: optional float32 array of room noise at 16 kHz (about 2 s) to clean audio with."""
         self.model = model
-        self.whisper = whisper                # faster_whisper.WhisperModel, or None
-        self.vad = webrtcvad.Vad(VAD_LEVEL)
+        self.noise = noise
+        self.stream = None
+        self.nr = None
+        if noise is not None:
+            import noisereduce
+            self.nr = noisereduce
         self.reset()
 
     def reset(self):
-        self.recognizer = KaldiRecognizer(self.model, SR)
-        self.recognizer.SetWords(True)
-        self.frame_count = 0                  # our clock: one tick per frame
-        self.prev_end = 0.0                   # end time of the last recognized word
-        self.voiced = deque()                 # one True/False per frame (speech or not)
-        self.audio = deque()                  # raw bytes, one entry per frame (for Whisper)
-        self.base = 0                         # absolute frame number of voiced[0] / audio[0]
-        self.sentences = []                   # every finished sentence, as text
-        # Vosk supplies word times relative to the start of the recording.  Keep the
-        # final-word timings so the session score can measure speaking pace without
-        # treating a deliberate pause between ideas as speech.
-        self.word_times = []                  # [(start, end), ...]
-        # (audio clock, words recognized so far including Vosk's current partial).
-        # This is intentionally provisional and powers only the live display.
-        self.pace_history = deque()
-        self.last_voiced_at = None
-        self.totals = {f: 0 for f in FILLERS} | {"filler?": 0}
-        self.filler_checkpoints = []
-        self.alerted = {f: 0 for f in FILLERS}    # fillers already alerted from this phrase's partials
+        self.close()
+        self.buf = np.zeros(0, dtype=np.float32)      # audio waiting to be sent in CHUNK-sized pieces
+        self.pending = deque()                        # events from Moonshine's callbacks, drained by feed()
+        self.sentences = []                           # every finished sentence, as text
+        self.totals = {f: 0 for f in FILLERS}
+        self.filler_checkpoints = []                  # (line start time, filler) for each filler counted
+        self.alerted = {f: 0 for f in FILLERS}        # fillers already alerted from this line's partials
         self.last_partial = ""
+        self.stream = self.model.create_stream(update_interval=UPDATE_INTERVAL)
+        self.stream.add_listener(_Listener(self))
+        self.stream.start()
 
-    # ---------- helpers ----------
-    def longest_voiced_run(self, start_t, end_t):
-        """Return the start time and duration of the longest voiced stretch."""
-        a = max(int(start_t / FRAME_SEC), self.base)
-        b = min(int(end_t / FRAME_SEC), self.base + len(self.voiced))
-        best = cur = 0
-        best_start = a
-        for i in range(a, b):
-            if self.voiced[i - self.base]:
-                cur += 1
-                if cur > best:
-                    best = cur
-                    best_start = i - cur + 1
-            else:
-                cur = 0
-        return max(start_t, best_start * FRAME_SEC), best * FRAME_SEC
+    def close(self):
+        if self.stream is not None:
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                log.debug("stream was already stopped", exc_info=True)
+            self.stream = None
 
-    def get_clip(self, start_t, end_t, pad=0.1):
-        """Cut the sound between two times out of the audio history (floats Whisper accepts)."""
-        a = max(int((start_t - pad) / FRAME_SEC), self.base)
-        b = min(int((end_t + pad) / FRAME_SEC), self.base + len(self.audio))
-        chunk = [self.audio[i - self.base] for i in range(a, b)]
-        if not chunk:
-            return None
-        return np.frombuffer(b"".join(chunk), dtype=np.int16).astype(np.float32) / 32768.0
+    @property
+    def paragraph(self):
+        return " ".join(self.sentences)
 
-    def classify(self, start_t, end_t):
-        """'um' / 'uh' if Whisper hears a filler in that clip, None if not; 'filler?' without Whisper."""
-        if self.whisper is None:
-            return "filler?"
-        clip = self.get_clip(start_t, end_t)
-        if clip is None:
-            return None
-        segments, _ = self.whisper.transcribe(
-            clip, language="en", initial_prompt=PROMPT, beam_size=1,
-            vad_filter=False, condition_on_previous_text=False,
-        )
-        words = [re.sub(r"[^a-z]", "", w.lower()) for s in segments for w in s.text.split()]
-        return next((FILLER_MAP[w] for w in words if w in FILLER_MAP), None)
-
-    def new_fillers(self, counts):
-        """Fillers in `counts` beyond what was already alerted for this phrase (one per occurrence)."""
+    # ---------- callbacks from Moonshine (may run on another thread) ----------
+    def _new_fillers(self, counts):
+        """Fillers in `counts` beyond what was already alerted for this line (one per occurrence)."""
         hits = []
         for word, n in counts.items():
             while self.alerted[word] < n:
@@ -191,12 +183,33 @@ class Transcriber:
         if elapsed < minimum_seconds or word_change < 3:
             return None
         return round(max(0, word_change) * 60 / elapsed, 1)
+    def _on_partial(self, text):
+        if text == self.last_partial:
+            return
+        self.last_partial = text
+        self.pending.append(("partial", text))
+        for w in self._new_fillers(count_fillers(text)):
+            self.pending.append(("filler", w))
 
-    def flush(self):
-        """End of the session: finish whatever phrase is still open."""
-        return self.finish_phrase(json.loads(self.recognizer.FinalResult()))
+    def _on_final(self, text, start_time):
+        counts = count_fillers(text)
+        for w in self._new_fillers(counts):            # ones the partials didn't show
+            self.pending.append(("filler", w))
+        for w in FILLERS:
+            self.totals[w] += counts[w]
+            self.filler_checkpoints += [(start_time, w)] * counts[w]
+            self.alerted[w] = 0                        # reset for the next line
 
-    def finish_phrase(self, res):
+        sentence = sentence_text(text)
+        if sentence:
+            self.sentences.append(sentence)
+            self.pending.append(("sentence", sentence))
+        self.last_partial = ""
+        self.pending.append(("partial", ""))           # clear the partial line on screen
+        log.debug("line completed: %r", text)
+
+    # ---------- main ----------
+    def drain(self):
         events = []
         counts = count_fillers(res.get("text", ""))
         events += [("filler", w) for w in self.new_fillers(counts)]     # ones the partials didn't show
@@ -238,24 +251,31 @@ class Transcriber:
             text = sentence_text(tokens)
             self.sentences.append(text)
             events.append(("sentence", text))
+        while self.pending:
+            events.append(self.pending.popleft())
         return events
 
-    def mark_filler(self, label, tokens, start_t):
-        self.totals[label] += 1
-        if label != "filler?":
-            self.filler_checkpoints.append((start_t, label))
-        tokens.append("[um?]" if label == "filler?" else f"[{label}]")
-        return [("filler", label)]
+    def feed(self, frame):
+        """One 30 ms frame (480 int16 samples as bytes) -> list of events."""
+        samples = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
+        self.buf = np.concatenate([self.buf, samples])
+        while len(self.buf) >= CHUNK:
+            chunk, self.buf = self.buf[:CHUNK], self.buf[CHUNK:]
+            if self.nr is not None:
+                chunk = self.nr.reduce_noise(
+                    y=chunk, sr=SR, y_noise=self.noise, stationary=True
+                ).astype(np.float32)
+            self.stream.add_audio(chunk, SR)
+        return self.drain()
+
+    def flush(self):
+        """End of the session: stop the stream so the open line finishes, then return its events."""
+        if self.stream is not None:
+            self.stream.stop()
+        return self.drain()
 
 
-def load_vosk(path):
-    from vosk import SetLogLevel
-    SetLogLevel(-1)                                   # Kaldi's logging is very chatty
-    return Model(str(path))
-
-
-def load_whisper(name="tiny.en"):
-    from faster_whisper import WhisperModel
-    model = WhisperModel(name, compute_type="int8")
-    model.transcribe(np.zeros(SR // 2, dtype=np.float32), language="en")    # warm up
-    return model
+def load_moonshine(language="en"):
+    """Load the Moonshine model once (downloads and caches it the first time)."""
+    model_path, model_arch = get_model_for_language(language)
+    return MoonshineTranscriber(model_path=model_path, model_arch=model_arch)

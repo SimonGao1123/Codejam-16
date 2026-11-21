@@ -10,15 +10,15 @@ import pytest
 
 from presentation_service.audio_analysis import AudioAnalyzer
 from presentation_service.scoring import BODY_RULES, VOICE_RULES, score_presentation
-from presentation_service.server import VOSK_MODEL, AlertBoard, Session, audio_connection
-from presentation_service.transcript import load_vosk
+from presentation_service.server import AlertBoard, Session, audio_connection
+from presentation_service.transcript import load_moonshine
 
 SR = 16000
 
 
 @pytest.fixture(scope="module")
-def vosk_model():
-    return load_vosk(VOSK_MODEL)
+def stt_model():
+    return load_moonshine()
 
 
 def feed_all(analyzer, samples, chunk=2048):
@@ -40,10 +40,10 @@ def say(text, tmp_path):
     return pcm.astype(np.float32) / 32768.0
 
 
-def test_tone_gives_pitch_and_volume(vosk_model):
+def test_tone_gives_pitch_and_volume(stt_model):
     t = np.arange(SR * 2) / SR
     tone = 0.2 * np.sin(2 * np.pi * 200 * t)
-    msgs = [m for m in feed_all(AudioAnalyzer(vosk_model, None, AlertBoard()), tone) if m["type"] == "voice"]
+    msgs = [m for m in feed_all(AudioAnalyzer(stt_model, AlertBoard()), tone) if m["type"] == "voice"]
     assert len(msgs) == 20                                      # every 100 ms
     assert all(len(m["pitches"]) == 2 for m in msgs)            # both 50 ms readings in each
     assert abs(msgs[-1]["pitch_hz"] - 200) < 5 and -20 < msgs[-1]["volume_dbfs"] < -10
@@ -52,17 +52,17 @@ def test_tone_gives_pitch_and_volume(vosk_model):
     assert abs(msgs[-1]["spike_hz"] - msgs[-1]["typical_hz"] * 2 ** (9 / 12)) < 0.5
 
 
-def test_voice_calibration_from_speechlike_tone(vosk_model):
-    a = AudioAnalyzer(vosk_model, None, AlertBoard())
+def test_voice_calibration_from_speechlike_tone(stt_model):
+    a = AudioAnalyzer(stt_model, AlertBoard())
     a.request_calibration()
     t = np.arange(SR * 4) / SR
     msgs = feed_all(a, 0.2 * np.sin(2 * np.pi * 180 * t))
     assert msgs[-1]["calibrated"] and "Voice calibrated: 180 Hz" in msgs[-1]["message"]
 
 
-def test_quiet_alert_posts_to_board(vosk_model):
+def test_quiet_alert_posts_to_board(stt_model):
     board = AlertBoard()
-    feed_all(AudioAnalyzer(vosk_model, None, board), np.zeros(SR * 4, dtype=np.float32))
+    feed_all(AudioAnalyzer(stt_model, board), np.zeros(SR * 4, dtype=np.float32))
     assert "Speak up" in board.active()
 
 
@@ -150,6 +150,8 @@ def test_out_of_range_pace_posts_the_matching_live_alert(
 
 def test_session_score_has_recording_relative_checkpoints(vosk_model):
     session = Session(vosk_model)
+def test_session_score_has_recording_relative_checkpoints(stt_model):
+    session = Session(stt_model)
     session.audio.set_embedder(lambda texts: np.ones((len(texts), 1), dtype=np.float32))
 
     class Client:
@@ -165,14 +167,12 @@ def test_session_score_has_recording_relative_checkpoints(vosk_model):
             # Simulate one dropped mic chunk before a filler in the final phrase.
             yield struct.pack("<d", 51) + np.zeros(SR // 10, dtype="<f4").tobytes()
             yield struct.pack("<d", 51.6) + np.zeros(3 * SR, dtype="<f4").tobytes()
+            # Moonshine reports a finished line with its start time (seconds of speech audio)
             transcriber = session.audio.transcriber
-            transcriber.flush = lambda: transcriber.finish_phrase({
-                "text": "you know results improved across all markets",
-                "result": [{"word": "you", "start": 0.35, "end": 0.45},
-                           {"word": "know", "start": 0.45, "end": 0.65},
-                           *({"word": word, "start": 0.65 + i / 10, "end": 0.75 + i / 10}
-                             for i, word in enumerate("results improved across all markets".split()))],
-            })
+            transcriber.flush = lambda: (
+                transcriber._on_final("you know results improved across all markets", 0.35),
+                transcriber.drain(),
+            )[1]
             yield json.dumps({"type": "session_end"})
 
         async def send(self, message):
@@ -196,10 +196,10 @@ def test_session_score_has_recording_relative_checkpoints(vosk_model):
     ]
 
 
-def test_transcript_and_filler_counts_from_speech(vosk_model, tmp_path):
+def test_transcript_and_filler_counts_from_speech(stt_model, tmp_path):
     speech = say("So I think, you know, the results are like really good. So that is the plan.", tmp_path)
     board = AlertBoard()
-    a = AudioAnalyzer(vosk_model, None, board)
+    a = AudioAnalyzer(stt_model, board)
     msgs = feed_all(a, np.concatenate([speech, np.zeros(SR, dtype=np.float32)]))
     msgs += a.finish()
     transcripts = [m for m in msgs if m["type"] == "transcript"]
@@ -214,9 +214,9 @@ def test_transcript_and_filler_counts_from_speech(vosk_model, tmp_path):
     print("\n", sentences, final["fillers"])
 
 
-def test_filler_counts_go_up_before_the_sentence_ends(vosk_model, tmp_path):
+def test_filler_counts_go_up_before_the_sentence_ends(stt_model, tmp_path):
     speech = say("I really like this idea and I like the plan", tmp_path)       # no pause: stays partial
-    a = AudioAnalyzer(vosk_model, None, AlertBoard())
+    a = AudioAnalyzer(stt_model, AlertBoard())
     msgs = [m for m in feed_all(a, speech) if m["type"] == "transcript"]
     assert not any(m["new_sentences"] for m in msgs)                           # sentence not finished yet
     assert msgs[-1]["fillers"]["like"] == 2 and msgs[-1]["total"] == 2
@@ -233,32 +233,32 @@ def voice_rules(**changes):
     return base
 
 
-def test_voice_settings_disable_and_retime_quiet_alert(vosk_model):
+def test_voice_settings_disable_and_retime_quiet_alert(stt_model):
     silence = np.zeros(SR * 4, dtype=np.float32)
     board = AlertBoard()
-    a = AudioAnalyzer(vosk_model, None, board)
+    a = AudioAnalyzer(stt_model, board)
     a.apply_settings(voice_rules(quiet={"enabled": False}))
     feed_all(a, silence)
     assert "Speak up" not in board.active()
 
     board = AlertBoard()
-    a = AudioAnalyzer(vosk_model, None, board)
+    a = AudioAnalyzer(stt_model, board)
     a.apply_settings(voice_rules(quiet={"duration": 10}))       # longer than the 4 s of silence
     feed_all(a, silence)
     assert "Speak up" not in board.active()
 
 
-def test_voice_threshold_and_settings_survive_new_session(vosk_model):
-    a = AudioAnalyzer(vosk_model, None, AlertBoard())
+def test_voice_threshold_and_settings_survive_new_session(stt_model):
+    a = AudioAnalyzer(stt_model, AlertBoard())
     a.apply_settings(voice_rules(pitch={"threshold": 4}, volume={"threshold": 12}))
     a.reset()                                                    # new practice session
     assert a.voice.pitch_jump_semitones == 4 and a.voice.volume_jump_db == 12
 
 
-def test_filler_alert_follows_rule_but_still_counts(vosk_model, tmp_path):
+def test_filler_alert_follows_rule_but_still_counts(stt_model, tmp_path):
     speech = say("I like this and I like that", tmp_path)
     board = AlertBoard()
-    a = AudioAnalyzer(vosk_model, None, board)
+    a = AudioAnalyzer(stt_model, board)
     a.apply_settings(voice_rules(filler={"enabled": False}))
     msgs = feed_all(a, speech) + a.finish()
     assert msgs[-1]["fillers"]["like"] == 2 and not any(x.startswith("Filler") for x in board.active())
