@@ -5,30 +5,44 @@ webcam incidents during the recorded session. The incident keys match the
 existing live rule IDs. Count a sustained webcam condition once, even if it
 appears in many frames. Use 0 for rules that were measured and never triggered,
 and omit rules that could not be evaluated (e.g. shoulders without calibration).
+
+Scoring is rate-based. Each rule's incidents are converted to incidents per
+minute, then compared to two thresholds:
+
+  * at or below the GOOD rate  -> no deduction (normal, natural speech)
+  * at or above the BAD rate   -> the rule's full maximum deduction
+  * in between                 -> the deduction rises linearly
+
+So the same mistakes cost less in a long presentation than in a short one.
 """
 
 from collections.abc import Mapping
 
-FILLER_MAX_POINTS = 6
-LIGHT_FILLER_COUNT = 2
-LIGHT_FILLER_DEDUCTION = 0.25
-REPEATED_FILLER_DEDUCTION = 0.75
+# Presentations shorter than this are scored as if they were this long, so one
+# slip in a very short clip can't dominate the score.
+MIN_SCORING_MINUTES = 1.0
+# Used when no length is known at all (neither recorded nor expected).
+FALLBACK_MINUTES = 5.0
 
-# Rule ID: (deduction per incident, maximum deduction, feedback)
+FILLER_MAX_POINTS = 6
+# (good rate, bad rate) in fillers per minute
+FILLER_RATES = (2.0, 8.0)
+
+# Rule ID: (good rate/min, bad rate/min, maximum deduction, feedback)
 VOICE_RULES = {
-    "volume": (0.5, 1, "Keep your volume steady and soften sudden loud peaks."),
-    "pitch": (0.5, 1, "Vary your tone naturally and smooth out sudden jumps in pitch."),
-    "quiet": (0.5, 1, "Project a little more during quiet passages."),
+    "volume": (1.0, 4.0, 1, "Keep your volume steady and soften sudden loud peaks."),
+    "pitch": (1.0, 4.0, 1, "Vary your tone naturally and smooth out sudden jumps in pitch."),
+    "quiet": (1.0, 4.0, 1, "Project a little more during quiet passages."),
 }
 BODY_RULES = {
-    "look_down": (1.25, 4, "Bring your eyes back to the calibrated camera position after checking notes."),
-    "face": (0.5, 1.5, "Stay in frame and face the camera while speaking."),
-    "tilt": (0.75, 2, "Keep your shoulders level with your calibrated posture."),
-    "repeat": (0.25, 1, "Vary your gestures and avoid repeating the same motion in quick succession."),
-    "still": (0.5, 1.5, "Use an occasional purposeful gesture to emphasize a point."),
-    "fast": (0.25, 1, "Slow down quick hand movements so each gesture has a clear purpose."),
+    "look_down": (1.0, 5.0, 4, "Bring your eyes back to the calibrated camera position after checking notes."),
+    "face": (0.5, 3.0, 1.5, "Stay in frame and face the camera while speaking."),
+    "tilt": (0.5, 3.0, 2, "Keep your shoulders level with your calibrated posture."),
+    "repeat": (1.0, 4.0, 1, "Vary your gestures and avoid repeating the same motion in quick succession."),
+    "still": (0.5, 3.0, 1.5, "Use an occasional purposeful gesture to emphasize a point."),
+    "fast": (1.0, 4.0, 1, "Slow down quick hand movements so each gesture has a clear purpose."),
 }
-MAX_SCORE = FILLER_MAX_POINTS + sum(rule[1] for rule in (*VOICE_RULES.values(), *BODY_RULES.values()))
+MAX_SCORE = FILLER_MAX_POINTS + sum(rule[2] for rule in (*VOICE_RULES.values(), *BODY_RULES.values()))
 PACE_MAX_POINTS = 4
 # Presentation guidance varies with context.  A 140 WPM centre and a 40 WPM
 # comfortable band are sensible defaults; the centre is configurable in the UI.
@@ -50,6 +64,23 @@ def _count(value: int) -> int:
     return value
 
 
+def _minutes(duration_seconds: float | None) -> float | None:
+    """Presentation length in minutes, or None if unknown or invalid."""
+    if (
+        not isinstance(duration_seconds, (int, float))
+        or isinstance(duration_seconds, bool)
+        or duration_seconds <= 0
+    ):
+        return None
+    return duration_seconds / 60
+
+
+def _rate_deduction(rate: float, good: float, bad: float, maximum: float) -> float:
+    """0 at or below `good`, `maximum` at or above `bad`, linear in between."""
+    share = (rate - good) / (bad - good)
+    return maximum * min(1.0, max(0.0, share))
+
+
 def _category(checks: dict) -> dict:
     maximum = sum(check["max_points"] for check in checks.values())
     deducted = sum(check["deduction"] for check in checks.values())
@@ -61,23 +92,35 @@ def _category(checks: dict) -> dict:
     }
 
 
-def _incident_category(counts: Mapping[str, int] | None, rules: dict) -> dict:
+def _incident_category(
+    counts: Mapping[str, int] | None,
+    rules: dict,
+    scoring_minutes: float,
+    length_known: bool,
+) -> dict:
     checks = {}
-    for rule_id, (rate, maximum, tip) in rules.items():
+    for rule_id, (good, bad, maximum, tip) in rules.items():
         if counts is None or rule_id not in counts:
             continue
         count = _count(counts[rule_id])
+        rate = count / scoring_minutes
         checks[rule_id] = {
             "count": count,
+            "per_minute": round(rate, 2) if length_known else None,
+            "good_rate": good,
+            "bad_rate": bad,
             "max_points": maximum,
-            "deduction": min(count * rate, maximum),
+            "deduction": round(_rate_deduction(rate, good, bad, maximum), 3),
             "feedback": tip if count else None,
         }
     return _category(checks)
 
 
 def _pace_category(pace: Mapping[str, object] | None, target_wpm: float) -> dict:
-    """Score a moderate average pace (2 pts) and a steady pace (2 pts)."""
+    """Score a moderate average pace (2 pts) and a steady pace (2 pts).
+
+    Pace is already a rate (words per minute), so it needs no length scaling.
+    """
     if pace is None:
         return _category({})
     average = pace.get("average_wpm")
@@ -168,6 +211,8 @@ def score_presentation(
     body_incidents: Mapping[str, int] | None = None,
     pace: Mapping[str, object] | None = None,
     pace_target_wpm: float = 140,
+    duration_seconds: float | None = None,
+    expected_minutes: float | None = None,
     volume: Mapping[str, object] | None = None,
 ) -> dict:
     """Return a JSON-ready score out of 20, category breakdown, and ordered tips.
@@ -176,31 +221,48 @@ def score_presentation(
     when no transcript was available. The transcript's "filler?" tally is
     reported separately because those detections are unconfirmed.
 
+    Length: duration_seconds (the recorded length) is used when available;
+    otherwise expected_minutes (what the user said to expect); otherwise
+    FALLBACK_MINUTES is assumed. Lengths under MIN_SCORING_MINUTES are scored
+    as MIN_SCORING_MINUTES. The result's scoring_minutes shows the length used.
+
+    The complete rubric allocates 6 points for fillers, 3 for voice tone,
     The complete rubric allocates 6 points for fillers, 3 for voice tone, 4 for volume
     (projection, steadiness, long pauses; `volume` is AudioAnalyzer.volume_summary()),
     4 for speaking pace, and 11 for body language. The score uses the available points as its
     denominator. measured_points shows how much of the rubric was evaluated.
     With no measured data, score is None.
     """
+    minutes = _minutes(duration_seconds)
+    duration_source = "recorded" if minutes else None
+    if minutes is None and isinstance(expected_minutes, (int, float)) and not isinstance(expected_minutes, bool):
+        minutes = _minutes(expected_minutes * 60)
+        duration_source = "expected" if minutes else None
+    length_known = minutes is not None
+    scoring_minutes = max(minutes, MIN_SCORING_MINUTES) if length_known else FALLBACK_MINUTES
+
     filler_checks = {}
     if filler_counts is not None:
         count = sum(_count(value) for word, value in filler_counts.items() if word != "filler?")
-        light = min(count, LIGHT_FILLER_COUNT)
-        deduction = light * LIGHT_FILLER_DEDUCTION + (count - light) * REPEATED_FILLER_DEDUCTION
+        good, bad = FILLER_RATES
+        rate = count / scoring_minutes
         filler_checks["filler"] = {
             "count": count,
+            "per_minute": round(rate, 2) if length_known else None,
+            "good_rate": good,
+            "bad_rate": bad,
             "suspected_count": _count(filler_counts.get("filler?", 0)),
             "max_points": FILLER_MAX_POINTS,
-            "deduction": min(deduction, FILLER_MAX_POINTS),
+            "deduction": round(_rate_deduction(rate, good, bad, FILLER_MAX_POINTS), 3),
             "feedback": "Try a short pause instead of filling the silence." if count else None,
         }
 
     categories = {
         "filler": _category(filler_checks),
-        "voice_tone": _incident_category(voice_incidents, VOICE_RULES),
+        "voice_tone": _incident_category(voice_incidents, VOICE_RULES, scoring_minutes, length_known),
         "volume": _volume_category(volume, voice_incidents),
         "speaking_pace": _pace_category(pace, pace_target_wpm),
-        "body_language": _incident_category(body_incidents, BODY_RULES),
+        "body_language": _incident_category(body_incidents, BODY_RULES, scoring_minutes, length_known),
     }
     measured_points = sum(category["max_points"] for category in categories.values())
     deducted = sum(category["deduction"] for category in categories.values())
@@ -209,7 +271,7 @@ def score_presentation(
          "deduction": check["deduction"]}
         for category_name, category in categories.items()
         for rule_id, check in category["checks"].items()
-        if check["feedback"]
+        if check["feedback"] and check["deduction"] > 0
     ]
     feedback.sort(key=lambda tip: tip["deduction"], reverse=True)
     return {
@@ -217,6 +279,9 @@ def score_presentation(
         if measured_points else None,
         "max_score": MAX_SCORE + PACE_MAX_POINTS + VOLUME_MAX_POINTS,
         "measured_points": measured_points,
+        "duration_minutes": round(minutes, 2) if length_known else None,
+        "duration_source": duration_source,
+        "scoring_minutes": round(scoring_minutes, 2),
         "categories": categories,
         "feedback": feedback,
     }
