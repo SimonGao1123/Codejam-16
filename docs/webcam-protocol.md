@@ -4,7 +4,9 @@ The Electron app captures the webcam, runs MediaPipe (pose, hands, face) on the 
 skeleton itself. It sends the raw landmarks to the **webcam analysis service** (Python), which does
 all the calculations and replies with what to draw on top of the video.
 
-- Transport: one WebSocket at **`ws://127.0.0.1:8766`**, JSON text messages.
+- Transport: WebSocket at **`ws://127.0.0.1:<port>/webcam`**, JSON text messages. The port is chosen by the Electron app,
+  which starts `service/` itself (`app/src/main/analysisService.ts`); the same service also serves the audio side at `/audio`
+  (`audio-protocol.md`).
 - TypeScript types: `app/src/renderer/src/practice/webcamProtocol.ts`. Keep this file and that one in sync.
 - Electron reconnects every second if the service isn't running, and drops frames instead of
   queueing them when the service falls behind.
@@ -80,11 +82,15 @@ frames that follow.
 
 ## What the service computes
 
-Everything that `experiments/mediapipe_webcam/webcam_test.py` does after MediaPipe, on the `webcam`
-branch: `Calibration`, `HandMotion`, `Alert`, `shoulder_tilt`, `head_pitch`, `eyes_down`,
-`hand_angle`, `match_hands`, and the thresholds at the top of that file. Those functions read
-landmarks with `.x` / `.y` / `.z` / `.visibility`, so wrapping each `[x, y, z, v]` list in a small
-object is enough to reuse them.
+`service/presentation_service/webcam_analysis.py`: the analysis from
+`experiments/mediapipe_webcam/webcam_test.py`, ported without OpenCV/MediaPipe (`Calibration`,
+`HandMotion`, `Alert`, `shoulder_tilt`, `head_pitch`, `eyes_down`, `hand_angle`, `match_hands`, and
+the same thresholds). Each `[x, y, z, v]` list is wrapped in a small object with `.x` / `.y` / `.z`
+/ `.visibility`, so the functions are unchanged.
+
+The audio side adds to each `state`: a `voice: ... Hz ... dBFS` status line (or the voice
+calibration status), and voice / filler alerts in `alerts` (see `audio-protocol.md`). A
+`calibrate` message also starts voice calibration.
 
 ## Recordings
 

@@ -1,8 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
+// the Python analysis service's port, passed by the main process (see src/main/analysisService.ts)
+const portArg = process.argv.find((a) => a.startsWith('--analysis-service-port='))
+
 // APIs exposed to the renderer as window.api
 const api = {
+  servicePort: Number(portArg?.split('=')[1]) || 8766,
   webcamRecorder: {
     start: (): Promise<{ dir: string; base: string }> =>
       ipcRenderer.invoke('webcam-recorder:start'),

@@ -1,11 +1,12 @@
-// Messages between the Electron app and the Python analysis service (ws://127.0.0.1:8766).
+// Messages between the Electron app and the Python analysis service (ws://127.0.0.1:<port>/webcam).
 // Full description: docs/webcam-protocol.md. Keep the two in sync.
 //
 // Electron runs MediaPipe and draws the skeleton itself (no lag). Every processed frame it
 // sends the raw landmarks; Python does all the calculations and replies with an overlay
 // state that Electron draws on top of the video, the same way webcam_test.py does.
 
-export const WEBCAM_ANALYSIS_URL = 'ws://127.0.0.1:8766'
+/** The service is started by the main process on a free port (src/main/analysisService.ts). */
+export const webcamAnalysisUrl = (): string => `ws://127.0.0.1:${window.api.servicePort}/webcam`
 
 /** [x, y, z, visibility]: x/y normalized 0-1 in the mirrored view, z in roughly x units. */
 export type PoseLandmark = [number, number, number, number]

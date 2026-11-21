@@ -3,6 +3,7 @@ import { join, normalize } from 'path'
 import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { startAnalysisService } from './analysisService'
 import { registerWebcamRecorderIpc } from './webcamRecorder'
 
 // The built UI is served from app://renderer/ instead of file://, because MediaPipe loads its
@@ -20,7 +21,7 @@ function serveRenderer(): void {
   })
 }
 
-function createWindow(): void {
+function createWindow(servicePort: number): void {
   const mainWindow = new BrowserWindow({
     width: 1320,
     height: 900,
@@ -31,7 +32,9 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       // keep analysing when the window is covered (e.g. slides on top) or minimized
-      backgroundThrottling: false
+      backgroundThrottling: false,
+      // the analysis service's port, read by the preload script
+      additionalArguments: [`--analysis-service-port=${servicePort}`]
     }
   })
 
@@ -62,6 +65,8 @@ app.whenReady().then(async () => {
 
   registerWebcamRecorderIpc()
   serveRenderer()
+  // the Python analysis service starts loading its models while the window opens
+  const servicePort = await startAnalysisService()
 
   // macOS shows its camera / microphone permission prompts the first time
   if (process.platform === 'darwin') {
@@ -69,15 +74,9 @@ app.whenReady().then(async () => {
     await systemPreferences.askForMediaAccess('microphone')
   }
 
-  createWindow()
-
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+  createWindow(servicePort)
 })
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
-})
+// Closing the window quits the app on every platform, including macOS (where apps normally stay
+// open in the Dock); quitting also stops the analysis service (see analysisService.ts).
+app.on('window-all-closed', () => app.quit())

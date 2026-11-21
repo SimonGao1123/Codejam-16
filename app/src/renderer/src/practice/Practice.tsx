@@ -1,6 +1,7 @@
 import CameraPreview from './CameraPreview'
 import MicrophoneMeter from './MicrophoneMeter'
 import SessionControls from './SessionControls'
+import TranscriptPanel from './TranscriptPanel'
 import { usePracticeSession } from './usePracticeSession'
 
 export default function Practice(): React.JSX.Element {
@@ -41,6 +42,7 @@ export default function Practice(): React.JSX.Element {
           endPractice={session.endPractice}
         />
       </div>
+      <TranscriptPanel micStream={micStream} running={running} />
     </main>
   )
 }

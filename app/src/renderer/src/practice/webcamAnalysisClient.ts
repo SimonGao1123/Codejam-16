@@ -1,7 +1,7 @@
 // WebSocket client for the Python analysis service. Reconnects on its own, and drops frames
 // instead of queueing them when Python falls behind, so the overlay never lags further and further.
 
-import { WEBCAM_ANALYSIS_URL, type ClientMessage, type StateMessage } from './webcamProtocol'
+import { webcamAnalysisUrl, type ClientMessage, type StateMessage } from './webcamProtocol'
 
 const RECONNECT_MS = 1000
 const MAX_BUFFERED_BYTES = 256 * 1024 // ~10 frames; beyond this, skip sending until Python catches up
@@ -12,7 +12,7 @@ export class WebcamAnalysisClient {
   private closed = false
   private retry: ReturnType<typeof setTimeout> | null = null
 
-  constructor(private url = WEBCAM_ANALYSIS_URL) {
+  constructor(private url = webcamAnalysisUrl()) {
     this.connect()
   }
 
