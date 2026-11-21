@@ -68,9 +68,11 @@ class AlertRule:
 
 
 class VoiceMonitor:
-    def __init__(self, quiet_dbfs=-45.0, quiet_seconds=3.0,
-                 volume_jump_db=8.0, pitch_jump_semitones=9.0):
+    def __init__(self, quiet_dbfs=-45.0, quiet_drop_db=15.0, noise_floor_dbfs=-60.0,
+                 quiet_seconds=3.0, volume_jump_db=8.0, pitch_jump_semitones=9.0):
         self.quiet_dbfs = quiet_dbfs
+        self.quiet_drop_db = quiet_drop_db
+        self.noise_floor_dbfs = noise_floor_dbfs
         self.volume_jump_db = volume_jump_db
         self.pitch_jump_semitones = pitch_jump_semitones
         self.volume_history = deque(maxlen=BASELINE_HISTORY_BLOCKS)
@@ -86,7 +88,7 @@ class VoiceMonitor:
         """Measure pitch and volume for one 50 ms mono audio block."""
         rms = np.sqrt(np.mean(np.square(samples, dtype=np.float64)))
         volume = 20 * np.log10(max(rms, 1e-8))
-        pitch = pitch_hz(samples) if volume >= self.quiet_dbfs else None
+        pitch = pitch_hz(samples) if volume >= self.noise_floor_dbfs else None
         self.latest_pitch_hz = pitch
         self.latest_volume_dbfs = volume
         return pitch, volume
@@ -108,9 +110,13 @@ class VoiceMonitor:
                              if len(self.pitch_history) >= BASELINE_MIN_BLOCKS else None)
         else:
             typical_pitch, typical_volume = self.calibrated_baseline
-        quiet_threshold = self.quiet_dbfs
-        if typical_volume is not None:
-            quiet_threshold = max(quiet_threshold, typical_volume - 15)
+        # Before calibration the fixed level is a floor; after it, quiet is relative to the speaker.
+        if self.calibrated_baseline is not None:
+            quiet_threshold = max(self.noise_floor_dbfs, typical_volume - self.quiet_drop_db)
+        elif typical_volume is not None:
+            quiet_threshold = max(self.quiet_dbfs, typical_volume - self.quiet_drop_db)
+        else:
+            quiet_threshold = self.quiet_dbfs
 
         too_quiet = volume < quiet_threshold
         loud = typical_volume is not None and volume - typical_volume >= self.volume_jump_db
