@@ -1,9 +1,9 @@
 {
   "name": "app",
   "version": "1.0.0",
-  "description": "An Electron application with React and TypeScript",
+  "description": "Presentation Helper: rehearse presentations with live feedback on posture, voice, filler words and your script",
   "main": "./out/main/index.js",
-  "author": "example.com",
+  "author": "Codejam-16 team",
   "homepage": "https://electron-vite.org",
   "scripts": {
     "format": "prettier --write .",
