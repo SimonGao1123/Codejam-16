@@ -74,6 +74,10 @@ class Transcriber:
         self.audio = deque()                  # raw bytes, one entry per frame (for Whisper)
         self.base = 0                         # absolute frame number of voiced[0] / audio[0]
         self.sentences = []                   # every finished sentence, as text
+        # Vosk supplies word times relative to the start of the recording.  Keep the
+        # final-word timings so the session score can measure speaking pace without
+        # treating a deliberate pause between ideas as speech.
+        self.word_times = []                  # [(start, end), ...]
         self.totals = {f: 0 for f in FILLERS} | {"filler?": 0}
         self.filler_checkpoints = []
         self.alerted = {f: 0 for f in FILLERS}    # fillers already alerted from this phrase's partials
@@ -165,6 +169,7 @@ class Transcriber:
         tokens = []                                   # this sentence, word by word
         words = res.get("result", [])
         for index, w in enumerate(words):
+            self.word_times.append((float(w["start"]), float(w["end"])))
             label = w["word"]
             if label == "you" and index + 1 < len(words) and words[index + 1]["word"] == "know":
                 label = "you know"

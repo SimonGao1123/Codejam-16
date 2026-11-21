@@ -66,16 +66,35 @@ def test_quiet_alert_posts_to_board(vosk_model):
     assert "Speak up" in board.active()
 
 
-def test_repeated_fillers_cost_more_in_twenty_point_rubric():
+def test_repeated_fillers_cost_more_in_twenty_four_point_rubric():
     voice = dict.fromkeys(VOICE_RULES, 0)
     body = dict.fromkeys(BODY_RULES, 0)
     result = score_presentation(filler_counts={"um": 8, "filler?": 5},
                                 voice_incidents=voice, body_incidents=body)
-    assert result["max_score"] == result["measured_points"] == 20
-    assert result["score"] == 15
+    # Pace was not available, so the existing checks are normalized to the
+    # full 24-point rubric while measured_points reports what was assessed.
+    assert result["max_score"] == 24
+    assert result["measured_points"] == 20
+    assert result["score"] == 18
     assert result["categories"]["voice_tone"]["max_points"] == 3
     assert result["categories"]["body_language"]["max_points"] == 11
     assert score_presentation(filler_counts={"um": 100})["score"] == 0
+
+
+def test_pace_scores_moderate_delivery_and_consistency():
+    steady = score_presentation(pace={"average_wpm": 140, "segment_wpms": [135, 145, 140]})
+    assert steady["categories"]["speaking_pace"]["points"] == 4
+    assert steady["max_score"] == 24
+    assert steady["score"] == 24
+
+    rushed = score_presentation(pace={"average_wpm": 210, "segment_wpms": [100, 190, 240]})
+    checks = rushed["categories"]["speaking_pace"]["checks"]
+    assert checks["moderate_pace"]["deduction"] == 2
+    assert checks["consistent_pace"]["deduction"] > 0
+
+
+def test_pace_is_not_scored_without_enough_transcript_data():
+    assert score_presentation(pace=None)["categories"]["speaking_pace"]["points"] is None
 
 
 def test_session_score_has_recording_relative_checkpoints(vosk_model):

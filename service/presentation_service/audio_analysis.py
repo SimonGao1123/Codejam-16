@@ -242,6 +242,56 @@ class AudioAnalyzer:
         self.collect(self.transcriber.flush(), sentences, fillers)
         return [self.transcript_message(sentences, fillers, partial="")] + self.check_script(force=True)
 
+    def pace_summary(self):
+        """Return speaking-rate data for the final score, or None when it is too short.
+
+        A new speaking run starts after a two-second gap.  That keeps natural pauses
+        between slides or ideas from making an otherwise measured delivery look slow.
+        Each run is split into roughly 20-word samples for the consistency check.
+        """
+        words = self.transcriber.word_times
+        if len(words) < 20:
+            return None
+
+        runs, run = [], [words[0]]
+        for word in words[1:]:
+            if word[0] - run[-1][1] > 2:
+                runs.append(run)
+                run = [word]
+            else:
+                run.append(word)
+        runs.append(run)
+
+        def wpm(part):
+            duration = part[-1][1] - part[0][0]
+            return len(part) * 60 / duration if duration >= 1 else None
+
+        durations = [part[-1][1] - part[0][0] for part in runs]
+        active_seconds = sum(durations)
+        if active_seconds < 8:
+            return None
+        average = len(words) * 60 / active_seconds
+        samples = []
+        for part in runs:
+            for i in range(0, len(part), 20):
+                sample = part[i:i + 20]
+                # A short final fragment is too noisy to judge consistency.
+                if len(sample) >= 8 and (rate := wpm(sample)) is not None:
+                    samples.append(rate)
+        return {
+            "average_wpm": round(average, 1),
+            "segment_wpms": [round(rate, 1) for rate in samples],
+            "word_count": len(words),
+        }
+
+    def pace_target_wpm(self):
+        """Preferred WPM from the shared settings, with a safe default."""
+        target = self.settings.get("pace", {}).get("threshold", 140)
+        try:
+            return min(200, max(80, float(target)))
+        except (TypeError, ValueError):
+            return 140.0
+
     def _recording_clock(self, sample):
         """Convert an analyzer sample offset to the renderer's monotonic clock."""
         index = bisect_right(self._sample_offsets, sample) - 1

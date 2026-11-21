@@ -41,12 +41,18 @@ The app sends both controls for camera-only practice too. Raw audio is optional.
 
 ### `session_score`: after the final transcript
 
-Contains `score` (out of `max_score`, currently 20, or null without measured data),
-`measured_points` (the available portion of the rubric), `categories` (filler, voice tone, and
-body language breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
+Contains `score` (out of `max_score`, currently 24, or null without measured data),
+`measured_points` (the available portion of the rubric), `categories` (filler, voice tone, speaking
+pace, and body language breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
 with a `category`, `label`, and `at` in seconds from recording start). Voice incidents come from the existing voice detector.
 Webcam incidents use the configured hold durations and count each sustained condition once.
 Hiding live banners does not turn off scoring.
+
+Speaking pace is measured from final transcript word timings. Its four points are split equally
+between a moderate average pace and consistency across roughly 20-word samples. The default target
+is 140 WPM (full pace credit from 120–160 WPM); users can customize that target under **Preferred
+speaking pace** in Alert and scoring settings. Sessions with fewer than 20 recognized words or less
+than eight seconds of active speech leave pace unmeasured.
 
 ### `voice`: every 100 ms
 

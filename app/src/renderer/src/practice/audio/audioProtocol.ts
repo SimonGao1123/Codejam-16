@@ -66,7 +66,7 @@ export interface ScriptPositionMessage {
   events: string[] // what just happened, e.g. "Jumped ahead to chunk 7: skipped 4, 5, 6"
 }
 
-type ScoreCategory = 'filler' | 'voice_tone' | 'body_language'
+type ScoreCategory = 'filler' | 'voice_tone' | 'speaking_pace' | 'body_language'
 
 export interface PlaybackCheckpoint {
   at: number
@@ -94,6 +94,8 @@ export interface SessionScoreMessage {
           deduction: number
           feedback: string | null
           suspected_count?: number
+          average_wpm?: number
+          target_wpm?: number
         }
       >
     }

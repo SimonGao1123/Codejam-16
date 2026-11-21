@@ -24,7 +24,7 @@ export default function AlertRules({
   const info = ruleInfo(selected)
   return (
     <section className="la-card" aria-labelledby="la-rules">
-      <h2 id="la-rules">Alert rules</h2>
+      <h2 id="la-rules">Alert and scoring settings</h2>
       <div className="la-rules">
         {groups.map((group) => (
           <div key={group} role="group" aria-label={group}>
@@ -73,7 +73,7 @@ export default function AlertRules({
           </label>
         )}
         <div className="la-timing">
-          {!info.instant && (
+          {!info.instant && !info.scoringOnly && (
             <label>
               Minimum duration <span>{settings.duration}s</span>
               <input
@@ -88,7 +88,7 @@ export default function AlertRules({
               />
             </label>
           )}
-          <label>
+          {!info.scoringOnly && <label>
             Cooldown <span>{settings.cooldown}s</span>
             <input
               type="range"
@@ -99,7 +99,7 @@ export default function AlertRules({
                 updateRule(selected.id, { cooldown: event.target.valueAsNumber })
               }
             />
-          </label>
+          </label>}
         </div>
       </div>
     </section>
