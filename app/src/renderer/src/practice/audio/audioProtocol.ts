@@ -15,6 +15,9 @@ export type AudioControlMessage =
   | { type: 'session_start'; started_at: number } // renderer monotonic seconds at recording start
   | { type: 'session_end' } // practice ended: Python sends the final transcript and score
   | ScriptControlMessage
+  // the room's noise level, measured while the user stood still during the get-ready countdown;
+  // Python counts audio up to ~10 dB above it as "not speaking". Sent just before session_start.
+  | { type: 'noise_floor'; dbfs: number }
 
 /** The user's script (pasted or read from a PDF); null / empty = no script, comparison off.
  *  Python compares the transcript with it and keeps it across sessions until it changes. */
@@ -35,11 +38,10 @@ export interface VoiceMessage {
   pitches: (number | null)[] // every 50 ms reading since the last message, oldest first
   wpm: number | null // provisional WPM from Moonshine's partial words; refreshes every 100 ms
   volume_dbfs: number
-  typical_hz: number | null // calibrated pitch, or the running typical pitch before calibrating
+  typical_hz: number | null // median pitch of the last 10 s of speech (null for the first second)
   spike_hz: number | null // a "Steady your pitch" alert fires above this
-  calibrated: boolean
-  calibrating: boolean
-  message: string // calibration status, e.g. "Voice calibrated: 180 Hz, -30 dBFS"
+  speaking: boolean // louder than the room's silence level
+  silence_dbfs: number | null // not speaking below this (null = room not measured)
 }
 
 export interface TranscriptMessage {
@@ -68,7 +70,7 @@ export interface ScriptPositionMessage {
   events: string[] // what just happened, e.g. "Jumped ahead to chunk 7: skipped 4, 5, 6"
 }
 
-type ScoreCategory = 'filler' | 'voice_tone' | 'speaking_pace' | 'body_language'
+type ScoreCategory = 'filler' | 'voice_tone' | 'volume' | 'speaking_pace' | 'body_language'
 
 export interface PlaybackCheckpoint {
   at: number
@@ -98,6 +100,7 @@ export interface SessionScoreMessage {
           suspected_count?: number
           average_wpm?: number
           target_wpm?: number
+          margin_db?: number // volume projection: typical speech above the room's noise
         }
       >
     }

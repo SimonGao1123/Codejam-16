@@ -12,7 +12,7 @@ type Props = {
   metric: 'pitch' | 'volume' | 'wpm'
   typicalHz?: number | null
   spikeHz?: number | null
-  calibrated?: boolean
+  silenceDbfs?: number | null // volume graph: below this the speaker counts as not speaking
   live: boolean // false: freeze on the last reading (session ended)
 }
 
@@ -28,7 +28,8 @@ const COLORS = {
   label: '#8f89a8',
   trace: '#c4aeff',
   typical: '#8fd6a1',
-  spike: '#f08a8a'
+  spike: '#f08a8a',
+  silence: '#8f89a8'
 }
 const FONT = '12px -apple-system, "Segoe UI", sans-serif'
 
@@ -37,15 +38,15 @@ export default function VoiceGraph({
   metric,
   typicalHz = null,
   spikeHz = null,
-  calibrated = false,
+  silenceDbfs = null,
   live
 }: Props): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const linesRef = useRef({ typicalHz, spikeHz, calibrated, live })
+  const linesRef = useRef({ typicalHz, spikeHz, silenceDbfs, live })
 
   useEffect(() => {
-    linesRef.current = { typicalHz, spikeHz, calibrated, live }
-  }, [typicalHz, spikeHz, calibrated, live])
+    linesRef.current = { typicalHz, spikeHz, silenceDbfs, live }
+  }, [typicalHz, spikeHz, silenceDbfs, live])
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -83,7 +84,12 @@ function render(
   w: number,
   h: number,
   samples: VoiceSample[],
-  lines: { typicalHz: number | null; spikeHz: number | null; calibrated: boolean; live: boolean },
+  lines: {
+    typicalHz: number | null
+    spikeHz: number | null
+    silenceDbfs: number | null
+    live: boolean
+  },
   metric: Props['metric']
 ): void {
   const { ticks, unit } = SCALES[metric]
@@ -94,16 +100,17 @@ function render(
   if (right <= left || bottom <= top) return
 
   const last = samples.at(-1)
-  const end = (metric === 'pitch' || metric === 'wpm') && lines.live
-    ? performance.now() / 1000
-    : (last?.t ?? 0)
+  const end =
+    (metric === 'pitch' || metric === 'wpm') && lines.live
+      ? performance.now() / 1000
+      : (last?.t ?? 0)
   // Let short volume recordings fill the chart, then scroll once 15 seconds have been captured.
   const windowSeconds =
     metric === 'wpm' && samples.length
       ? Math.max(VOICE_WINDOW_S, end - samples[0].t)
       : metric === 'volume' && last
-      ? Math.min(VOICE_WINDOW_S, Math.max(0.3, end - samples[0].t))
-      : VOICE_WINDOW_S
+        ? Math.min(VOICE_WINDOW_S, Math.max(0.3, end - samples[0].t))
+        : VOICE_WINDOW_S
   const start = end - windowSeconds
   const x = (t: number): number => left + ((t - start) / windowSeconds) * (right - left)
   const y = (value: number): number => {
@@ -150,11 +157,17 @@ function render(
   }
   if (lines.spikeHz)
     dashed(lines.spikeHz, COLORS.spike, `Pitch spike ${lines.spikeHz.toFixed(0)} Hz`)
+  if (lines.silenceDbfs !== null)
+    dashed(
+      lines.silenceDbfs,
+      COLORS.silence,
+      `Not speaking below ${lines.silenceDbfs.toFixed(0)} dBFS`
+    )
   if (lines.typicalHz)
     dashed(
       lines.typicalHz,
       COLORS.typical,
-      `${lines.calibrated ? 'Calibrated' : 'Typical'} ${lines.typicalHz.toFixed(0)} Hz`
+      `Typical ${lines.typicalHz.toFixed(0)} Hz (last 10 s of speech)`
     )
 
   // Break the trace when readings are missing.

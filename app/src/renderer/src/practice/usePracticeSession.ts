@@ -10,6 +10,7 @@ export function usePracticeSession() {
   const [started, setStarted] = useState<number | null>(null)
   const [seconds, setSeconds] = useState(0)
   const [finished, setFinished] = useState(false)
+  const [discarded, setDiscarded] = useState(false) // stopped before calibration finished
   const [pending, setPending] = useState(false)
   const [countdown, setCountdown] = useState<number | null>(null)
   const [starting, setStarting] = useState(false)
@@ -92,6 +93,7 @@ export function usePracticeSession() {
     const request = ++generation.current
     setSeconds(0)
     setFinished(false)
+    setDiscarded(false)
     setDeviceError('')
     setRecordingError('')
     setPlaybackUrl(null)
@@ -109,7 +111,9 @@ export function usePracticeSession() {
       {
         enabled: microphone,
         name: 'Microphone',
-        constraints: { audio: true },
+        // no automatic gain: it turns the mic up during silences, so the room's silence level
+        // measured at the start of the session (and every volume reading) would drift
+        constraints: { audio: { autoGainControl: false } },
         setStream: setMicStream
       }
     ]
@@ -139,14 +143,16 @@ export function usePracticeSession() {
     setCountdown(COUNTDOWN_SECONDS)
   }
 
-  function endPractice(): void {
+  /** discard: stopped before calibration finished, so nothing is scored and the recording is
+   *  deleted instead of saved. */
+  function endPractice(discard = false): void {
     if (started === null) return
     const duration = (performance.now() - started) / 1000
     setSeconds(Math.floor(duration))
     setRecordingDuration(duration)
     const current = recording.current
     recording.current = null
-    const saved = current?.recorder.stop()
+    const saved = current?.recorder.stop(discard)
     releaseDevices()
     setCameraStream(null)
     setMicStream(null)
@@ -154,7 +160,8 @@ export function usePracticeSession() {
     setDeviceError('')
     setStarted(null)
     setFinished(true)
-    if (saved) {
+    setDiscarded(discard)
+    if (saved && !discard) {
       const request = generation.current
       setSaving(true)
       void saved
@@ -168,6 +175,8 @@ export function usePracticeSession() {
         .finally(() => {
           if (generation.current === request) setSaving(false)
         })
+    } else if (saved) {
+      void saved.catch(console.error) // discarded: deleting the files
     }
   }
 
@@ -184,6 +193,7 @@ export function usePracticeSession() {
     startedAt: started === null ? null : started / 1000,
     seconds,
     finished,
+    discarded,
     pending,
     preparing,
     countdown,

@@ -4,24 +4,29 @@ If the user gave a script, the transcriber's text is then compared with it (scri
 no extra audio processing, just the transcript that's already there.
 Message format: docs/audio-protocol.md."""
 
-import threading
 import time
 from bisect import bisect_right
+from statistics import median
 
 import numpy as np
 
 from .script_compare import ScriptTracker, chunk_script
 from .transcript import FRAME, SR, Transcriber
-from .voice import BLOCK_SIZE, BLOCK_SECONDS, VoiceCalibration, VoiceMonitor
+from .voice import BLOCK_SIZE, BLOCK_SECONDS, VoiceMonitor
 
 VOICE_EVERY_BLOCKS = 2          # send a voice reading every 100 ms
 VOICE_RULES = {VoiceMonitor.VOLUME_SPIKE: ("volume", "volume_spike"),
                VoiceMonitor.PITCH_SPIKE: ("pitch", "pitch_spike"),
-               VoiceMonitor.QUIET: ("quiet", "quiet")}  # text -> (rule id, VoiceMonitor attribute)
+               VoiceMonitor.QUIET: ("quiet", "quiet"),
+               VoiceMonitor.PAUSE: ("pause", "pause")}  # text -> (rule id, VoiceMonitor attribute)
 SCRIPT_RULES = {"jump": "out_of_order", "back": "out_of_order", "off_topic": "off_script",
                 "stuck": "stuck"}             # script event kind -> Live alerts rule id
 SCRIPT_CHECK_S = 1.5            # compare the transcript with the script at most this often
+SPEECH_MARGIN_DB = 10           # louder than the room's measured noise by this much = speaking
+SILENCE_LIMITS_DBFS = (-70.0, -30.0)   # keep the "not speaking" level sane if the measurement was off
 PACE_COMFORT_BAND_WPM = 40       # matches the scoring rubric's full-credit band
+VOLUME_MIN_SPEECH_S = 5         # volume is scored once there's this much voiced speech
+VOLUME_SEGMENT_S = 10           # volume steadiness compares the level of each 10 s of speech
 PACE_PAUSE_BREAK_S = 1           # deliberate presentation pauses do not lower the final pace score
 
 
@@ -29,10 +34,10 @@ class AudioAnalyzer:
     def __init__(self, moonshine_model, alerts):
         self.alerts = alerts                        # shared AlertBoard, shown on the webcam overlay
         self.transcriber = Transcriber(moonshine_model)     # from load_moonshine() in transcript.py
-        self._calibrate_requested = threading.Event()
         self.settings = {}                          # Live alerts rules, see apply_settings()
         self.last_alert = {}                        # rule id -> time of its last pop-up (cooldowns)
         self.embedder = None                        # script comparison model, loaded in the background
+        self.noise_floor = None                     # room noise (dBFS) measured before the session
         self.script_chunks = []                     # the user's script, split into parts ([] = no script)
         self.script_tracker = None
         self.reset()
@@ -125,27 +130,41 @@ class AudioAnalyzer:
         v = self.voice
         for rule_id, alert_rule, attr in (("volume", v.volume_spike, "volume_jump_db"),
                                           ("pitch", v.pitch_spike, "pitch_jump_semitones"),
-                                          ("quiet", v.quiet, "quiet_drop_db")):
+                                          ("quiet", v.quiet, "quiet_drop_db"),
+                                          ("pause", v.pause, None)):
             s = self.settings.get(rule_id)
             if s:
                 alert_rule.duration_seconds = float(s["duration"])
                 alert_rule.cooldown_seconds = float(s["cooldown"])
-                if s.get("threshold") is not None:
+                if attr and s.get("threshold") is not None:
                     setattr(v, attr, float(s["threshold"]))
 
     def enabled(self, rule_id):
         return self.settings.get(rule_id, {}).get("enabled", True)
 
+    def set_noise_floor(self, dbfs):
+        """The room's noise level, measured by the app while the user stood still before the
+        session (get-ready countdown). Blocks no louder than this + SPEECH_MARGIN_DB count as not
+        speaking. None clears it (fixed thresholds again)."""
+        self.noise_floor = None if dbfs is None else float(dbfs)
+        self._configure_silence()
+
+    def _configure_silence(self):
+        lo, hi = SILENCE_LIMITS_DBFS
+        self.voice.silence_dbfs = (None if self.noise_floor is None
+                                   else min(hi, max(lo, self.noise_floor + SPEECH_MARGIN_DB)))
+
     def reset(self):
         """New practice session: fresh transcript, filler counts and voice baseline."""
         self.voice = VoiceMonitor()
         self._configure_voice()                     # a new monitor keeps the Live alerts settings
-        self.voice_calibration = VoiceCalibration(self.voice)
+        self._configure_silence()                   # and the room's measured silence level
         self.transcriber.reset()
         self.pending = np.zeros(0, dtype=np.float32)
         self.voice_pos = self.speech_pos = 0        # samples consumed by each side
         self.blocks = 0
         self.voice_incidents = {}
+        self.speech_volumes = []                    # dBFS of every voiced 50 ms block, for the volume score
         self.voice_checkpoints = []
         self._sample_offsets = []
         self._chunk_times = []
@@ -156,20 +175,15 @@ class AudioAnalyzer:
             self.script_tracker.reset()
             self.last_script_text, self.last_script_check = "", -float("inf")
 
-    def request_calibration(self):
-        """Thread-safe: called from the webcam side when the user clicks Calibrate."""
-        self._calibrate_requested.set()
-
     @property
     def voice_line(self):
         """Status line for the webcam overlay, or None before any audio arrived."""
         v = self.voice
         if v.latest_volume_dbfs is None:
             return None
-        if self.voice_calibration.active or self.voice_calibration.message.startswith("Voice: too"):
-            return self.voice_calibration.message
         pitch = f"{v.latest_pitch_hz:.0f} Hz" if v.latest_pitch_hz else "-- Hz"
-        return f"voice: {pitch}  {v.latest_volume_dbfs:.0f} dBFS"
+        silent = "  (not speaking)" if v.silence_dbfs is not None and not v.speaking else ""
+        return f"voice: {pitch}  {v.latest_volume_dbfs:.0f} dBFS{silent}"
 
     def feed(self, samples, started_at=None):
         """float32 samples in -> list of messages for Electron."""
@@ -181,33 +195,30 @@ class AudioAnalyzer:
         out = []
         transcript_changed, new_sentences, new_fillers = False, [], []
 
-        if self._calibrate_requested.is_set():
-            self._calibrate_requested.clear()
-            self.voice_calibration.start(self.blocks)
-
         # voice: 50 ms blocks
         while self.voice_pos + BLOCK_SIZE <= len(self.pending):
             block = self.pending[self.voice_pos:self.voice_pos + BLOCK_SIZE]
             self.voice_pos += BLOCK_SIZE
             self.blocks += 1
-            if self.voice_calibration.active:
-                self.voice_calibration.collect(block, self.blocks)
-            else:
-                alerts = self.voice.process(block, self.blocks * BLOCK_SECONDS)
-                self.voice_incidents.setdefault("quiet", 0)
-                if self.voice.typical_volume_dbfs is not None:
-                    self.voice_incidents.setdefault("volume", 0)
-                if self.voice.typical_pitch_hz is not None and self.voice.latest_pitch_hz is not None:
-                    self.voice_incidents.setdefault("pitch", 0)
-                for alert in alerts:
-                    rule, attribute = VOICE_RULES[alert]
-                    self.voice_incidents[rule] = self.voice_incidents.get(rule, 0) + 1
-                    active_blocks = getattr(self.voice, attribute).active_blocks
-                    onset = self._recording_clock(max(0, self.blocks - max(active_blocks, 1)) * BLOCK_SIZE)
-                    if onset is not None:
-                        self.voice_checkpoints.append((onset, "voice_tone", alert))
-                    if self.enabled(rule):
-                        self.alerts.post(alert)     # voice rules have their own cooldowns
+            alerts = self.voice.process(block, self.blocks * BLOCK_SECONDS)
+            self.voice_incidents.setdefault("quiet", 0)
+            if self.voice.typical_volume_dbfs is not None:
+                self.voice_incidents.setdefault("volume", 0)
+            if self.voice.typical_pitch_hz is not None and self.voice.latest_pitch_hz is not None:
+                self.voice_incidents.setdefault("pitch", 0)
+            if self.voice.has_spoken:
+                self.voice_incidents.setdefault("pause", 0)
+            if self.voice.latest_pitch_hz is not None:
+                self.speech_volumes.append(self.voice.latest_volume_dbfs)
+            for alert in alerts:
+                rule, attribute = VOICE_RULES[alert]
+                self.voice_incidents[rule] = self.voice_incidents.get(rule, 0) + 1
+                active_blocks = getattr(self.voice, attribute).active_blocks
+                onset = self._recording_clock(max(0, self.blocks - max(active_blocks, 1)) * BLOCK_SIZE)
+                if onset is not None:
+                    self.voice_checkpoints.append((onset, "volume" if rule == "pause" else "voice_tone", alert))
+                if self.enabled(rule):
+                    self.alerts.post(alert)         # voice rules have their own cooldowns
             p = self.voice.latest_pitch_hz
             self.recent_pitches.append(round(float(p), 1) if p else None)
             if self.blocks % VOICE_EVERY_BLOCKS == 0:
@@ -340,6 +351,22 @@ class AudioAnalyzer:
             return None
         return self._chunk_times[index] + (sample - self._sample_offsets[index]) / SR
 
+    def volume_summary(self):
+        """How loud the speech was, for the volume score: the median level of voiced blocks, the median
+        of each VOLUME_SEGMENT_S of speech (steadiness), and the room's noise level measured at the
+        start (None if it wasn't). None until there's VOLUME_MIN_SPEECH_S of speech."""
+        volumes = self.speech_volumes
+        if len(volumes) * BLOCK_SECONDS < VOLUME_MIN_SPEECH_S:
+            return None
+        size = round(VOLUME_SEGMENT_S / BLOCK_SECONDS)
+        segments = [median(volumes[i:i + size]) for i in range(0, len(volumes) - size + 1, size)]
+        silence = self.voice.silence_dbfs
+        return {
+            "speech_dbfs": round(float(median(volumes)), 1),
+            "segment_dbfs": [round(float(s), 1) for s in segments],
+            "room_dbfs": None if silence is None else round(silence - SPEECH_MARGIN_DB, 1),
+        }
+
     def checkpoints(self):
         result = self.voice_checkpoints.copy()
         for when, word in self.transcriber.filler_checkpoints:
@@ -358,7 +385,7 @@ class AudioAnalyzer:
                 self.post_rule("filler", f"Filler: {value}")
 
     def voice_message(self):
-        v, cal = self.voice, self.voice_calibration
+        v = self.voice
         pitches, self.recent_pitches = self.recent_pitches, []
         captured_at = self._recording_clock(self.blocks * BLOCK_SIZE - 1)
         return {
@@ -372,9 +399,9 @@ class AudioAnalyzer:
             "typical_hz": round(float(v.typical_pitch_hz), 1) if v.typical_pitch_hz else None,
             "spike_hz": (round(float(v.typical_pitch_hz) * 2 ** (v.pitch_jump_semitones / 12), 1)
                          if v.typical_pitch_hz else None),
-            "calibrated": v.calibrated_baseline is not None,
-            "calibrating": cal.active,
-            "message": cal.message,
+            "speaking": bool(v.speaking),           # louder than the room's silence level
+            "silence_dbfs": None if v.silence_dbfs is None else round(float(v.silence_dbfs), 1),
+
         }
 
     def transcript_message(self, new_sentences, new_fillers, partial=None):

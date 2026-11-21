@@ -132,3 +132,83 @@ def test_threshold_settings_reach_the_checks():
     a = WebcamAnalyzer()
     a.apply_settings(rules(tilt={"threshold": 3}, repeat={"threshold": 90}, fast={"threshold": 5}))
     assert a.limits == {"tilt": 3.0, "look_down": 15, "fast": 5.0, "repeat": 0.9}
+
+
+def test_session_start_calibration_is_immediate_and_3s():
+    a = WebcamAnalyzer()
+    a.process(frame(10.0))
+    a.calibrate(10.0, delay=0, duration=3)
+    s = a.process(frame(10.1))["calibration"]
+    assert s["phase"] == "recording" and "stand still in your resting position" in s["message"]
+    assert a.process(frame(12.9))["calibration"]["phase"] == "recording"
+    done = a.process(frame(13.1))["calibration"]
+    assert done["phase"] == "idle" and done["calibrated"]
+
+
+def test_manual_calibration_keeps_the_countdown():
+    a = WebcamAnalyzer()
+    a.process(frame(0.0))
+    a.calibrate(0.0)
+    assert a.process(frame(1.0))["calibration"]["phase"] == "waiting"
+
+
+def run_states(a, start, secs, **kw):
+    """Feeds frames from `start` for `secs`; returns (time, calibration state) per frame."""
+    out = []
+    for i in range(int(secs * FPS)):
+        t = start + i / FPS
+        f = frame(t, **{k: (v(t) if callable(v) else v) for k, v in kw.items()})
+        out.append((t, a.process(f)["calibration"]))
+    return out
+
+
+def test_when_ready_waits_for_face_shoulders_and_hands():
+    a = WebcamAnalyzer()
+    a.calibrate(0.0, delay=0, duration=3, when_ready=True)
+    states = run_states(a, 0.0, 3, face=False, hands=1)
+    assert all(s["phase"] == "arming" for _, s in states)
+    assert "show your face" in states[-1][1]["message"] and "show both hands" in states[-1][1]["message"]
+    # everyone in frame and still: records after READY_HOLD_S, done 3 s later
+    states = run_states(a, 3.0, 5)
+    first_rec = next(t for t, s in states if s["phase"] == "recording")
+    assert 3.7 <= first_rec <= 4.0
+    assert states[-1][1]["phase"] == "idle" and states[-1][1]["calibrated"]
+
+
+def test_when_ready_waits_for_the_speaker_to_hold_still():
+    a = WebcamAnalyzer()
+    a.calibrate(0.0, delay=0, duration=3, when_ready=True)
+    waving = lambda t: (0.4 + 0.08 * math.sin(2 * math.pi * 1.5 * t), 0.8)   # noqa: E731
+    states = run_states(a, 0.0, 4, lwrist=waving)
+    assert all(s["phase"] == "arming" for _, s in states[FPS:])            # after the first second
+    assert "hold still" in states[-1][1]["message"]
+    states = run_states(a, 4.0, 6)                                          # hands come to rest
+    assert states[-1][1]["calibrated"]
+
+
+def test_leaving_the_frame_while_recording_starts_over():
+    a = WebcamAnalyzer()
+    a.calibrate(0.0, delay=0, duration=3, when_ready=True)
+    states = run_states(a, 0.0, 2)                                          # recording starts ~0.75 s
+    assert states[-1][1]["phase"] == "recording"
+    states = run_states(a, 2.0, 1, face=False)                              # walks off mid-recording
+    assert states[-1][1]["phase"] == "arming" and "restarted" in states[-1][1]["message"]
+    states = run_states(a, 3.0, 5)                                          # back: full 3 s again
+    assert states[-1][1]["calibrated"]
+
+
+def test_no_alerts_or_scoring_while_waiting_to_calibrate():
+    a = WebcamAnalyzer()
+    a.start_scoring()
+    a.calibrate(0.0, delay=0, duration=3, when_ready=True)
+    for i in range(3 * FPS):
+        state = a.process(frame(i / FPS, face=False))
+    assert state["alerts"] == [] and a.incidents.get("face", 0) == 0
+
+
+def test_voice_alerts_show_while_waiting_to_calibrate():
+    # calibration can wait a long time for both hands; voice / filler alerts must still show
+    a = WebcamAnalyzer()
+    a.calibrate(0.0, delay=0, duration=3, when_ready=True)
+    state = a.process(frame(0.0, hands=0), extra_alerts=["Keep talking"])
+    assert state["calibration"]["phase"] == "arming" and state["alerts"] == ["Keep talking"]

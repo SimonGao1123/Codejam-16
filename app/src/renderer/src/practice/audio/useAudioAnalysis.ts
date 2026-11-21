@@ -20,6 +20,14 @@ import {
 const NO_FILLERS = Object.fromEntries(FILLER_WORDS.map((w) => [w, 0])) as Record<FillerWord, number>
 const FLASH_MS = 1500 // how long a filler chip stays highlighted after it's counted
 const SCRIPT_DEBOUNCE_MS = 500 // send the script once typing pauses, not on every keystroke
+const NOISE_BLOCK = 800 // 50 ms at 16 kHz, the service's voice block
+const MIN_NOISE_BLOCKS = 10 // need at least 0.5 s of the countdown to trust the room level
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
 
 export interface AudioAnalysis {
   connected: boolean
@@ -52,6 +60,7 @@ export function useAudioAnalysis(
   const volumeRef = useRef<VoiceSample[]>([])
   const wpmRef = useRef<VoiceSample[]>([])
   const sessionNumber = useRef(0)
+  const noiseLevels = useRef<number[]>([]) // dBFS per 50 ms block during the countdown
   const pendingScores = useRef<number[]>([])
   const [connected, setConnected] = useState(false)
   const [sentences, setSentences] = useState<string[]>([])
@@ -165,6 +174,8 @@ export function useAudioAnalysis(
       scriptRef.current = latestScriptRef.current
       client.setScript(scriptRef.current)
     }
+    const noise = noiseLevels.current
+    if (noise.length >= MIN_NOISE_BLOCKS) client.send({ type: 'noise_floor', dbfs: median(noise) })
     client.send({ type: 'session_start', started_at: startedAt })
     return () => {
       if (!client.connected) return
@@ -187,6 +198,36 @@ export function useAudioAnalysis(
       capture?.stop()
     }
   }, [startedAt, connected, micStream])
+
+  // get-ready countdown (mic open, session not started yet): the user is standing still and silent,
+  // so measure the room's noise level. Same 16 kHz audio and dBFS formula as the service's voice
+  // monitor; sent just before session_start.
+  useEffect(() => {
+    if (!micStream || startedAt !== null) return
+    noiseLevels.current = []
+    let stopped = false
+    let capture: { stop(): void } | null = null
+    let pending = new Float32Array(0)
+    captureMic(micStream, (samples) => {
+      const joined = new Float32Array(pending.length + samples.length)
+      joined.set(pending)
+      joined.set(samples, pending.length)
+      let i = 0
+      for (; i + NOISE_BLOCK <= joined.length; i += NOISE_BLOCK) {
+        let sum = 0
+        for (let j = i; j < i + NOISE_BLOCK; j++) sum += joined[j] * joined[j]
+        noiseLevels.current.push(20 * Math.log10(Math.max(Math.sqrt(sum / NOISE_BLOCK), 1e-8)))
+      }
+      pending = joined.slice(i)
+    }).then(
+      (c) => (stopped ? c.stop() : (capture = c)),
+      (err) => console.error('microphone capture failed', err)
+    )
+    return () => {
+      stopped = true
+      capture?.stop()
+    }
+  }, [micStream, startedAt])
 
   // un-highlight filler chips after FLASH_MS
   useEffect(() => {

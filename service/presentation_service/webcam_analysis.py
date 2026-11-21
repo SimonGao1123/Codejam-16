@@ -52,8 +52,14 @@ REPEAT_DETREND_S = 3.0      # moving average subtracted before the check; >= lon
 # Finger points tracked relative to the wrist, in hand lengths (wrist -> middle knuckle):
 # thumb, index, middle and pinky tips + middle knuckle (hand orientation / wrist bend).
 FINGER_POINTS = (4, 8, 12, 20, 9)
-CALIBRATE_DELAY_S = 2.0     # after clicking Calibrate, wait this long so you can get into position
-CALIBRATE_S = 2.0           # calibration then records this long and keeps the median of each measurement
+CALIBRATE_DELAY_S = 2.0     # default pause before recording (the app's session calibration uses 0)
+CALIBRATE_S = 2.0           # default recording length (the app's session calibration uses 3 s)
+# "when ready" calibration (start of each session): recording only starts once the face, both
+# shoulders and both hands are in frame and the speaker holds fairly still for READY_HOLD_S
+READY_HOLD_S = 0.75
+READY_STILL = 0.3           # wrist movement (shoulder widths/s, last 1 s) below this = holding still
+READY_BODY_STILL = 0.15     # shoulder (torso) movement (shoulder widths/s, last 1 s) below this
+READY_ABORT_S = 0.4         # not ready for this long while recording = start over
 
 
 class Alert:
@@ -230,8 +236,9 @@ def match_hands(hands, pose_wrists_px, w, h):
 
 
 class Calibration:
-    """After start(), waits CALIBRATE_DELAY_S, records each measurement for CALIBRATE_S, then keeps
-    the medians as the baseline."""
+    """After start(), waits `delay` (CALIBRATE_DELAY_S by default), records each measurement for
+    `duration` (CALIBRATE_S), then keeps the medians as the baseline. The app starts one with no
+    delay and 3 s of recording at the start of every practice session."""
 
     KEYS = ("tilt", "pitch", "eyes")              # required
     OPTIONAL = ("rest_l", "rest_r")               # resting wrist (x, y); None if resting out of frame
@@ -240,18 +247,32 @@ class Calibration:
         self.baseline = None          # {"tilt": deg, "pitch": deg, "eyes": score, "rest_l"/"rest_r": (x, y) or None}
         self.begins = None            # recording starts at this time (after the get-into-position pause)
         self.until = None             # recording ends at this time
+        self.armed = None             # recording length, while waiting for the speaker to be ready
         self.samples = {}
-        self.message = "Stand normally, look at the camera, then calibrate"
+        self.message = "Calibrates when the session starts"
 
-    def start(self, now):
-        self.begins = now + CALIBRATE_DELAY_S
-        self.until = self.begins + CALIBRATE_S
+    def start(self, now, delay=CALIBRATE_DELAY_S, duration=CALIBRATE_S):
+        self.armed = None
+        self.begins = now + delay
+        self.until = self.begins + duration
         self.samples = {k: [] for k in self.KEYS + self.OPTIONAL}
+
+    def arm(self, duration, message="Waiting to calibrate: get in frame and hold still"):
+        """Wait for the speaker to be in frame and still (WebcamAnalyzer checks), then record."""
+        self.begins = self.until = None
+        self.baseline = None          # a new session's calibration replaces the last one
+        self.armed = duration
+        self.message = message
 
     @property
     def recording(self):
-        """True for the whole calibration, including the pause before recording."""
+        """True from start() until recording ends, including the pause before recording."""
         return self.until is not None
+
+    @property
+    def busy(self):
+        """Armed or recording: alerts and scoring are paused."""
+        return self.armed is not None or self.recording
 
     def waiting(self, now):
         """True during the get-into-position pause."""
@@ -283,11 +304,12 @@ class Calibration:
         return True
 
     def state(self, now):
-        phase = "waiting" if self.waiting(now) else "recording" if self.recording else "idle"
+        phase = ("arming" if self.armed is not None else "waiting" if self.waiting(now)
+                 else "recording" if self.recording else "idle")
         if phase == "waiting":
             self.message = "Get into position - stand normally, hands at rest, look at the camera"
         elif phase == "recording":
-            self.message = "Recording calibration - hold still"
+            self.message = "Calibrating - stand still in your resting position, hands at rest, look at the camera"
         remaining = self.begins - now if phase == "waiting" else self.until - now if phase == "recording" else 0
         return {"phase": phase, "remaining": round(max(remaining, 0), 2),
                 "calibrated": self.baseline is not None, "message": self.message}
@@ -312,6 +334,10 @@ class WebcamAnalyzer:
         self.motion = HandMotion()
         self.both_seen_at = -math.inf       # last time both hands were detected
         self.last_t = 0.0
+        self.ready_since = None             # in frame and still since (calibration arming)
+        self.not_ready_since = None         # out of frame or moving since (while recording)
+        self.restarted = False              # this calibration was interrupted and is waiting again
+        self.torso = deque()                # (t, shoulder midpoint x, y in shoulder widths) for stillness
         # Live alerts rule id -> (alert, threshold setter); thresholds default to the constants above
         self.limits = {"tilt": TILT_MAX_DEG, "look_down": LOOK_DOWN_MAX_DEG, "fast": HAND_FAST,
                        "repeat": REPEAT_SCORE}
@@ -361,10 +387,75 @@ class WebcamAnalyzer:
                 # the repeat slider is a percentage; the score is 0-1
                 self.limits[rule_id] = s["threshold"] / 100 if rule_id == "repeat" else float(s["threshold"])
 
-    def calibrate(self, t=None):
-        """Start calibration. Timed by the frames that follow; `t` defaults to the last frame's time."""
-        if not self.calib.recording:
-            self.calib.start(self.last_t if t is None else t)
+    def calibrate(self, t=None, delay=None, duration=None, when_ready=False):
+        """Start calibration. Timed by the frames that follow; `t` defaults to the last frame's time.
+        delay / duration: get-into-position pause and recording length (None = the defaults).
+        when_ready: don't start recording until the face, shoulders and both hands are in frame and
+        the speaker holds still (the app's calibration at the start of each session)."""
+        if self.calib.busy:
+            return
+        duration = CALIBRATE_S if duration is None else duration
+        if when_ready:
+            self.calib.arm(duration)
+            self.ready_since = self.not_ready_since = None
+            self.restarted = False
+        else:
+            self.ready_since = None                 # timed calibration: never restarted
+            self.calib.start(self.last_t if t is None else t,
+                             CALIBRATE_DELAY_S if delay is None else delay, duration)
+
+    def _readiness(self, now, pose, face, both_recent, w, h):
+        """What's stopping calibration right now: [] when the speaker is in frame and still."""
+        missing = []
+        if not face:
+            missing.append("show your face")
+        shoulders = pose and all(pose[i].visibility > 0.5 for i in (L_SHOULDER, R_SHOULDER))
+        if not shoulders:
+            missing.append("step back so your shoulders are in frame")
+        if not both_recent:
+            missing.append("show both hands")
+        if not missing:
+            # torso: shoulder midpoint movement over the last second, in shoulder widths per second
+            _, width = shoulder_tilt(pose, w, h)
+            mx = (pose[L_SHOULDER].x + pose[R_SHOULDER].x) / 2 * w / width
+            my = (pose[L_SHOULDER].y + pose[R_SHOULDER].y) / 2 * h / width
+            self.torso.append((now, mx, my))
+            while now - self.torso[0][0] > 1.0:
+                self.torso.popleft()
+            t0, x0, y0 = self.torso[0]
+            body = math.hypot(mx - x0, my - y0) / max(now - t0, 0.25)
+            if self.motion.activity(1.0) > READY_STILL or body > READY_BODY_STILL:
+                missing.append("hold still")
+        else:
+            self.torso.clear()
+        return missing
+
+    def _update_calibration(self, now, missing):
+        """Arming: start recording once ready for READY_HOLD_S. Recording: start over if the speaker
+        leaves the frame or moves for READY_ABORT_S, so a bad moment can't become the baseline."""
+        c = self.calib
+        if c.armed is not None:
+            prefix = "Calibration restarted: " if self.restarted else "Waiting to calibrate: "
+            if missing:
+                self.ready_since = None
+                c.message = prefix + ", ".join(missing)
+            else:
+                self.ready_since = now if self.ready_since is None else self.ready_since
+                c.message = prefix + "hold still..."
+                if now - self.ready_since >= READY_HOLD_S:
+                    c.start(now, 0, c.armed)
+                    self.not_ready_since = None
+                    self.restarted = False
+        elif c.recording and not c.waiting(now) and self.ready_since is not None:
+            # only "when ready" calibrations (ready_since set) are restarted
+            if missing:
+                self.not_ready_since = now if self.not_ready_since is None else self.not_ready_since
+                if now - self.not_ready_since >= READY_ABORT_S:
+                    c.arm(c.until - c.begins, "Calibration restarted: " + ", ".join(missing))
+                    self.ready_since = self.not_ready_since = None
+                    self.restarted = True
+            else:
+                self.not_ready_since = None
 
     def process(self, msg, extra_lines=(), extra_alerts=()):
         """One `frame` message -> one `state` message. extra_* come from the audio side."""
@@ -387,7 +478,7 @@ class WebcamAnalyzer:
         tilt = pitch = eyes = None
         wrists = [None, None]
         base = self.calib.baseline
-        calibrating = self.calib.recording
+        calibrating = self.calib.busy
         hand_points = [points(hand["landmarks"]) for hand in hands]
 
         # shoulders + hand motion (pose)
@@ -455,6 +546,8 @@ class WebcamAnalyzer:
 
         lines.extend(extra_lines)
 
+        if self.calib.busy:
+            self._update_calibration(now, self._readiness(now, pose, face, both_recent, w, h))
         if self.calib.add(now, tilt=tilt, pitch=pitch, eyes=eyes, rest_l=wrists[0], rest_r=wrists[1]) and self.calib.baseline:
             for a in (self.tilt_alert, self.down_alert, self.still_alert):
                 a.reset()
@@ -471,11 +564,14 @@ class WebcamAnalyzer:
                 "fast": fast if any(wrists) else None,
             }
             self._score_frame(now, dict.fromkeys(conditions) if calibrating else conditions)
-        if not self.calib.recording:
+        if not self.calib.busy:
             checks = ((self.face_alert, not face), (self.tilt_alert, tilt_bad), (self.down_alert, down_bad),
                       (self.missing_alert, not both_hands),
                       (self.still_alert, still), (self.fast_alert, fast), (self.repeat_alert, repeating))
             alerts = [a.text for a, bad in checks if a.update(bad, now)]
+        # voice / filler / script alerts don't depend on the posture calibration: only hidden during
+        # the 3 s recording itself, not while it waits for the speaker to get in frame (which can last)
+        if not self.calib.recording:
             alerts.extend(extra_alerts)
 
         return {"type": "state", "t": now, "lines": lines, "alerts": alerts,

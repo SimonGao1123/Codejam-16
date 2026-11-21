@@ -3,6 +3,7 @@ import type { SessionScoreMessage } from '../audio/audioProtocol'
 const CATEGORY_LABELS = {
   filler: 'Filler words',
   voice_tone: 'Voice tone',
+  volume: 'Volume',
   speaking_pace: 'Speaking pace',
   body_language: 'Body language'
 } as const
@@ -25,6 +26,7 @@ export default function SessionResults({
           <dl className="ph-results-breakdown">
             {Object.entries(result.categories).map(([category, breakdown]) => {
               const pace = breakdown.checks.moderate_pace
+              const projection = breakdown.checks.projection
               return (
                 <div key={category}>
                   <dt>{CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS]}</dt>
@@ -34,6 +36,9 @@ export default function SessionResults({
                       : `${breakdown.points} / ${breakdown.max_points}`}
                     {pace?.average_wpm !== undefined && (
                       <small> · {pace.average_wpm} WPM (target {pace.target_wpm} WPM)</small>
+                    )}
+                    {projection?.margin_db !== undefined && (
+                      <small> · {projection.margin_db.toFixed(0)} dB above the room</small>
                     )}
                   </dd>
                 </div>

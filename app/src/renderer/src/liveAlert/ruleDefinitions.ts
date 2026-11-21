@@ -72,6 +72,15 @@ export const rules = [
     cooldown: 3
   },
   {
+    // not speaking (below the room's silence level, measured at session start) once you've started
+    id: 'pause',
+    group: 'Voice',
+    name: 'Long pause',
+    cue: 'Keep talking',
+    duration: 5,
+    cooldown: 0
+  },
+  {
     id: 'tilt',
     group: 'Posture',
     name: 'Shoulder tilt',

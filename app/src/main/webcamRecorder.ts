@@ -4,7 +4,7 @@
 import { app, ipcMain, protocol } from 'electron'
 import { randomUUID } from 'crypto'
 import { createReadStream, createWriteStream, type WriteStream } from 'fs'
-import { mkdir, stat } from 'fs/promises'
+import { mkdir, rm, stat } from 'fs/promises'
 import { join } from 'path'
 import { Readable } from 'stream'
 
@@ -89,11 +89,14 @@ export function registerWebcamRecorderIpc(): void {
     current?.data.write(line + '\n')
   })
 
-  ipcMain.handle('webcam-recorder:stop', async () => {
+  // discard: the session ended before calibration finished, so the files are deleted
+  ipcMain.handle('webcam-recorder:stop', async (_, discard?: boolean) => {
     if (!current) return null
     const { video, data, paths } = current
     current = null
     await Promise.all([close(video), close(data)])
-    return paths
+    if (!discard) return paths
+    await Promise.all([rm(paths.video, { force: true }), rm(paths.data, { force: true })])
+    return null
   })
 }

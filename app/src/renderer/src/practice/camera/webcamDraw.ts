@@ -134,7 +134,14 @@ export function drawOverlay(
   if (alertStyle === 'banner') state.alerts.forEach((text, i) => banner(ctx, top, i, text))
   if (alertStyle === 'compact') state.alerts.forEach((text, i) => pill(ctx, i, text))
   // 'silent': no alerts on screen
-  if (cal.phase === 'waiting') countdown(ctx, Math.ceil(cal.remaining))
+  if (cal.phase === 'arming') {
+    // the service says what's missing: "Waiting to calibrate: show both hands, hold still"
+    const todo = cal.message.split(': ').slice(1).join(': ') || 'get in frame and hold still'
+    countdown(ctx, null, todo.charAt(0).toUpperCase() + todo.slice(1))
+  }
+  if (cal.phase === 'waiting') countdown(ctx, Math.ceil(cal.remaining), 'Get into position')
+  if (cal.phase === 'recording')
+    countdown(ctx, Math.ceil(cal.remaining), 'Stand still in your resting position')
 }
 
 // Alert look, matching the Live alerts preview (.la-cue in liveAlerts.css)
@@ -190,18 +197,39 @@ function pill(ctx: CanvasRenderingContext2D, i: number, text: string): void {
   ctx.textBaseline = 'alphabetic'
 }
 
-/** Large countdown number in the middle of the frame, readable from a few steps back. */
-function countdown(ctx: CanvasRenderingContext2D, n: number): void {
+/** Large countdown number (if any) in the middle of the frame with an instruction under it, readable
+ *  from a few steps back. */
+function countdown(ctx: CanvasRenderingContext2D, n: number | null, caption: string): void {
   const px = 160
-  const text = String(n)
-  ctx.font = `bold ${px}px -apple-system, "Segoe UI", sans-serif`
-  const tw = ctx.measureText(text).width
-  outlined(
-    ctx,
-    text,
-    (ctx.canvas.width - tw) / 2,
-    (ctx.canvas.height + px * 0.7) / 2,
-    COLORS.yellow,
-    px
-  )
+  const baseline = (ctx.canvas.height + px * 0.7) / 2
+  if (n !== null) {
+    const text = String(n)
+    ctx.font = `bold ${px}px -apple-system, "Segoe UI", sans-serif`
+    const tw = ctx.measureText(text).width
+    outlined(ctx, text, (ctx.canvas.width - tw) / 2, baseline, COLORS.yellow, px)
+  }
+  // the caption wraps onto several centred lines so a long instruction stays inside the video
+  const cpx = 40
+  ctx.font = `bold ${cpx}px -apple-system, "Segoe UI", sans-serif`
+  const lines = wrap(ctx, caption, ctx.canvas.width - 80)
+  lines.forEach((text, i) => {
+    const cw = ctx.measureText(text).width
+    const y = baseline + cpx + 30 + i * (cpx + 12)
+    outlined(ctx, text, (ctx.canvas.width - cw) / 2, y, COLORS.yellow, cpx)
+  })
+}
+
+/** Splits text into lines no wider than maxWidth in the current font. */
+function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const lines: string[] = []
+  let current = ''
+  for (const word of text.split(' ')) {
+    const next = current ? `${current} ${word}` : word
+    if (current && ctx.measureText(next).width > maxWidth) {
+      lines.push(current)
+      current = word
+    } else current = next
+  }
+  if (current) lines.push(current)
+  return lines
 }

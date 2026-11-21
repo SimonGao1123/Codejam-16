@@ -44,7 +44,6 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
           samples={speech.pitch}
           typicalHz={voice?.typical_hz ?? null}
           spikeHz={voice?.spike_hz ?? null}
-          calibrated={voice?.calibrated ?? false}
           live={listening}
         />
       </section>
@@ -53,7 +52,12 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
           <h2 id="ph-volume-heading">Microphone volume</h2>
           {voice && <span>{voice.volume_dbfs.toFixed(0)} dBFS</span>}
         </div>
-        <VoiceGraph metric="volume" samples={speech.volume} live={listening} />
+        <VoiceGraph
+          metric="volume"
+          samples={speech.volume}
+          silenceDbfs={voice?.silence_dbfs ?? null}
+          live={listening}
+        />
       </section>
       <section className="ph-pitch" aria-labelledby="ph-wpm-heading">
         <div className="ph-card-head">
@@ -69,11 +73,9 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
             {!connected
               ? 'Speech analysis not connected'
               : listening
-                ? voice?.calibrating
-                  ? voice.message
-                  : voice?.pitch_hz
-                    ? `Listening · ${voice.pitch_hz.toFixed(0)} Hz · ${voice.volume_dbfs.toFixed(0)} dBFS`
-                    : 'Listening'
+                ? voice?.pitch_hz
+                  ? `Listening · ${voice.pitch_hz.toFixed(0)} Hz · ${voice.volume_dbfs.toFixed(0)} dBFS`
+                  : 'Listening'
                 : running
                   ? 'Microphone off'
                   : 'Starts with your practice session'}
