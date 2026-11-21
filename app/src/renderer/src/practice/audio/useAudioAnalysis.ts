@@ -5,13 +5,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-import type { PitchSample } from '../components/PitchGraph'
-import { PITCH_WINDOW_S } from '../components/PitchGraph'
+import { VOICE_WINDOW_S, type VoiceSample } from '../components/VoiceGraph'
 import { AudioAnalysisClient } from './audioAnalysisClient'
 import { captureMic } from './audioCapture'
 import {
   FILLER_WORDS,
   type FillerWord,
+  type SessionScoreMessage,
   type ScriptPositionMessage,
   type TranscriptMessage,
   type VoiceMessage
@@ -30,16 +30,25 @@ export interface AudioAnalysis {
   total: number
   flash: Partial<Record<FillerWord, number>> // fillers counted in the last FLASH_MS
   voice: VoiceMessage | null
-  pitch: React.RefObject<PitchSample[]> // last PITCH_WINDOW_S of readings, for the graph
+  pitch: React.RefObject<VoiceSample[]>
+  volume: React.RefObject<VoiceSample[]>
   scriptChunks: string[] // the script as Python split it ([] = no script)
   scriptReady: boolean // comparison model loaded
   scriptPosition: ScriptPositionMessage | null
 }
 
 /** `script`: the user's script text; empty = no script (comparison off). */
-export function useAudioAnalysis(micStream: MediaStream | null, script: string): AudioAnalysis {
+export function useAudioAnalysis(
+  micStream: MediaStream | null,
+  script: string,
+  startedAt: number | null,
+  onScore: (score: SessionScoreMessage | null) => void
+): AudioAnalysis {
   const clientRef = useRef<AudioAnalysisClient | null>(null)
-  const pitchRef = useRef<PitchSample[]>([])
+  const pitchRef = useRef<VoiceSample[]>([])
+  const volumeRef = useRef<VoiceSample[]>([])
+  const sessionNumber = useRef(0)
+  const pendingScores = useRef<number[]>([])
   const [connected, setConnected] = useState(false)
   const [sentences, setSentences] = useState<string[]>([])
   const [partial, setPartial] = useState('')
@@ -57,17 +66,24 @@ export function useAudioAnalysis(micStream: MediaStream | null, script: string):
     const client = new AudioAnalysisClient()
     clientRef.current = client
     client.setScript(scriptRef.current) // stored now, sent as soon as the socket opens
-    client.onConnectionChange = setConnected
+    client.onConnectionChange = (online) => {
+      if (!online) pendingScores.current = []
+      setConnected(online)
+    }
     client.onMessage = (msg) => {
       if (msg.type === 'voice') {
         setVoice(msg)
         const now = performance.now() / 1000
         const samples = pitchRef.current
         // one reading per 50 ms block; the newest is "now"
-        msg.pitches.forEach((hz, i) =>
-          samples.push({ t: now - (msg.pitches.length - 1 - i) * 0.05, hz })
+        msg.pitches.forEach((value, i) =>
+          samples.push({ t: now - (msg.pitches.length - 1 - i) * 0.05, value })
         )
-        while (samples.length && samples[0].t < now - PITCH_WINDOW_S - 1) samples.shift()
+        const volumeTime = msg.captured_at ?? now
+        const volumes = volumeRef.current
+        volumes.push({ t: volumeTime, value: msg.volume_dbfs })
+        while (samples.length && samples[0].t < now - VOICE_WINDOW_S - 1) samples.shift()
+        while (volumes.length && volumes[0].t < volumeTime - VOICE_WINDOW_S - 1) volumes.shift()
       } else if (msg.type === 'transcript') {
         applyTranscript(msg)
       } else if (msg.type === 'script_loaded') {
@@ -76,6 +92,8 @@ export function useAudioAnalysis(micStream: MediaStream | null, script: string):
         setScriptPosition(null)
       } else if (msg.type === 'script_position') {
         setScriptPosition(msg)
+      } else if (msg.type === 'session_score' && pendingScores.current.shift() === sessionNumber.current) {
+        onScore(msg)
       }
     }
     function applyTranscript(msg: TranscriptMessage): void {
@@ -92,7 +110,7 @@ export function useAudioAnalysis(micStream: MediaStream | null, script: string):
       client.close()
       clientRef.current = null
     }
-  }, [])
+  }, [onScore])
 
   // the script: sent once typing pauses (and again after a reconnect, by the client)
   useEffect(() => {
@@ -110,12 +128,13 @@ export function useAudioAnalysis(micStream: MediaStream | null, script: string):
     return () => window.clearTimeout(timer)
   }, [script])
 
-  // stream the mic while the session has one; a new session starts a fresh transcript
+  // Send session controls even when practicing with only a camera.
   useEffect(() => {
     const client = clientRef.current
-    if (!micStream || !client) return
-    let stopped = false
-    let capture: { stop(): void } | null = null
+    if (startedAt === null) return
+    const number = ++sessionNumber.current
+    onScore(null)
+    if (!connected || !client) return
     setSentences([])
     setPartial('')
     setFillers(NO_FILLERS)
@@ -123,22 +142,34 @@ export function useAudioAnalysis(micStream: MediaStream | null, script: string):
     setVoice(null)
     setScriptPosition(null)
     pitchRef.current = []
+    volumeRef.current = []
     if (latestScriptRef.current !== scriptRef.current) {
       // started within the debounce of an edit: send the script before the session begins
       scriptRef.current = latestScriptRef.current
       client.setScript(scriptRef.current)
     }
-    client.send({ type: 'session_start' })
-    captureMic(micStream, (samples) => client.sendAudio(samples)).then(
+    client.send({ type: 'session_start', started_at: startedAt })
+    return () => {
+      if (!client.connected) return
+      pendingScores.current.push(number)
+      client.send({ type: 'session_end' })
+    }
+  }, [startedAt, connected, onScore])
+
+  useEffect(() => {
+    const client = clientRef.current
+    if (startedAt === null || !connected || !micStream || !client) return
+    let stopped = false
+    let capture: { stop(): void } | null = null
+    captureMic(micStream, (samples, chunkStart) => client.sendAudio(samples, chunkStart)).then(
       (c) => (stopped ? c.stop() : (capture = c)),
       (err) => console.error('microphone capture failed', err)
     )
     return () => {
       stopped = true
       capture?.stop()
-      client.send({ type: 'session_end' })
     }
-  }, [micStream])
+  }, [startedAt, connected, micStream])
 
   // un-highlight filler chips after FLASH_MS
   useEffect(() => {
@@ -149,7 +180,7 @@ export function useAudioAnalysis(micStream: MediaStream | null, script: string):
 
   return {
     connected,
-    listening: Boolean(micStream) && connected,
+    listening: startedAt !== null && Boolean(micStream) && connected,
     sentences,
     partial,
     fillers,
@@ -157,6 +188,7 @@ export function useAudioAnalysis(micStream: MediaStream | null, script: string):
     flash,
     voice,
     pitch: pitchRef,
+    volume: volumeRef,
     scriptChunks,
     scriptReady,
     scriptPosition

@@ -29,7 +29,8 @@ ANALYSIS_SERVICE_PORT=8766 npm run dev                   # in app/: connect to i
 Options: `--port 8766`, `--whisper base.en` (more accurate um/uh check, slower), `--whisper ''`
 (no Whisper: suspected fillers show as `[um?]`), `--debug` (log every filler check).
 
-- Vosk model: `experiments/gap_heuristic/vosk-model-small-en-us-0.15` (in the repo).
+- Vosk uses `models/vosk-model-en-us-0.22` when installed, otherwise it uses the bundled
+  `experiments/gap_heuristic/vosk-model-small-en-us-0.15`.
 - Whisper `tiny.en` downloads to `~/.cache/huggingface/` on first run (~75 MB, needs internet once).
 - The script comparison model (all-MiniLM-L6-v2 via `fastembed`, ONNX) downloads to
   `~/.cache/fastembed/` on first run (~90 MB). `script_compare.py` is a copy of

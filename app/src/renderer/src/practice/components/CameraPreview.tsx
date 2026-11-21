@@ -1,26 +1,32 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { ClientMessage } from '../camera/webcamProtocol'
 
 import WebcamControls from './WebcamControls'
 import WebcamView, { type WebcamHandle, type WebcamStatus } from './WebcamView'
 
 type Props = {
   cameraStream: MediaStream | null
-  micStream: MediaStream | null
   camera: boolean
   pending: boolean
   running: boolean
+  logWebcam: (message: ClientMessage) => void
   children: ReactNode
 }
 
 export default function CameraPreview({
   cameraStream,
-  micStream,
   camera,
   pending,
   running,
+  logWebcam,
   children
 }: Props): React.JSX.Element {
   const webcam = useRef<WebcamHandle>(null)
+  useEffect(() => {
+    const view = webcam.current
+    view?.setLogger(logWebcam)
+    return () => view?.setLogger(null)
+  }, [logWebcam])
   const [status, setStatus] = useState<WebcamStatus>({
     ready: false,
     error: null,
@@ -47,12 +53,7 @@ export default function CameraPreview({
           </div>
         )}
       </div>
-      <WebcamControls
-        webcam={webcam}
-        status={status}
-        cameraStream={cameraStream}
-        micStream={micStream}
-      />
+      <WebcamControls webcam={webcam} status={status} />
       {children}
     </section>
   )

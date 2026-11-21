@@ -87,6 +87,7 @@ class VoiceMonitor:
         self.latest_pitch_hz = None
         self.latest_volume_dbfs = None
         self.typical_pitch_hz = None          # calibrated pitch, or the running median before that
+        self.typical_volume_dbfs = None
         self.calibrated_baseline = None
         self.quiet = AlertRule(quiet_seconds)
         self.volume_spike = AlertRule(0.3)
@@ -121,6 +122,7 @@ class VoiceMonitor:
         else:
             typical_pitch, typical_volume = self.calibrated_baseline
         self.typical_pitch_hz = typical_pitch
+        self.typical_volume_dbfs = typical_volume
         # Before calibration the fixed level is a floor; after it, quiet is relative to the speaker.
         if self.calibrated_baseline is not None:
             quiet_threshold = max(self.noise_floor_dbfs, typical_volume - self.quiet_drop_db)

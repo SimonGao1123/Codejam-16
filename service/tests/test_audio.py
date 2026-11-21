@@ -1,4 +1,7 @@
+import asyncio
+import json
 import shutil
+import struct
 import subprocess
 import wave
 
@@ -6,7 +9,8 @@ import numpy as np
 import pytest
 
 from presentation_service.audio_analysis import AudioAnalyzer
-from presentation_service.server import VOSK_MODEL, AlertBoard
+from presentation_service.scoring import BODY_RULES, VOICE_RULES, score_presentation
+from presentation_service.server import VOSK_MODEL, AlertBoard, Session, audio_connection
 from presentation_service.transcript import load_vosk
 
 SR = 16000
@@ -60,6 +64,66 @@ def test_quiet_alert_posts_to_board(vosk_model):
     board = AlertBoard()
     feed_all(AudioAnalyzer(vosk_model, None, board), np.zeros(SR * 4, dtype=np.float32))
     assert "Speak up" in board.active()
+
+
+def test_repeated_fillers_cost_more_in_twenty_point_rubric():
+    voice = dict.fromkeys(VOICE_RULES, 0)
+    body = dict.fromkeys(BODY_RULES, 0)
+    result = score_presentation(filler_counts={"um": 8, "filler?": 5},
+                                voice_incidents=voice, body_incidents=body)
+    assert result["max_score"] == result["measured_points"] == 20
+    assert result["score"] == 15
+    assert result["categories"]["voice_tone"]["max_points"] == 3
+    assert result["categories"]["body_language"]["max_points"] == 11
+    assert score_presentation(filler_counts={"um": 100})["score"] == 0
+
+
+def test_session_score_has_recording_relative_checkpoints(vosk_model):
+    session = Session(vosk_model)
+    session.audio.set_embedder(lambda texts: np.ones((len(texts), 1), dtype=np.float32))
+
+    class Client:
+        sent = []
+
+        async def __aiter__(self):
+            yield json.dumps({"type": "script", "text": "Results improved across all markets."})
+            yield json.dumps({"type": "session_start", "started_at": 50})
+            # One sustained camera incident should give one marker at the onset.
+            for i in range(30):
+                session.webcam.process({"t": 50.5 + i / 10, "width": 640, "height": 480})
+
+            # Simulate one dropped mic chunk before a filler in the final phrase.
+            yield struct.pack("<d", 51) + np.zeros(SR // 10, dtype="<f4").tobytes()
+            yield struct.pack("<d", 51.6) + np.zeros(3 * SR, dtype="<f4").tobytes()
+            transcriber = session.audio.transcriber
+            transcriber.flush = lambda: transcriber.finish_phrase({
+                "text": "you know results improved across all markets",
+                "result": [{"word": "you", "start": 0.35, "end": 0.45},
+                           {"word": "know", "start": 0.45, "end": 0.65},
+                           *({"word": word, "start": 0.65 + i / 10, "end": 0.75 + i / 10}
+                             for i, word in enumerate("results improved across all markets".split()))],
+            })
+            yield json.dumps({"type": "session_end"})
+
+        async def send(self, message):
+            self.sent.append(json.loads(message))
+
+    client = Client()
+    with session.audio_worker:
+        asyncio.run(audio_connection(client, session))
+    readings = [message for message in client.sent if message["type"] == "voice"]
+    assert readings[0]["captured_at"] == pytest.approx(51.1 - 1 / SR)
+    assert readings[1]["captured_at"] == pytest.approx(51.7 - 1 / SR)
+    assert client.sent[0]["type"] == "script_loaded" and client.sent[0]["ready"]
+    transcript, script_position, report = client.sent[-3:]
+    assert transcript["fillers"]["you know"] == 1
+    assert script_position["type"] == "script_position"
+    assert report["type"] == "session_score"
+    assert report["checkpoints"] == [
+        {"at": 0.5, "category": "body_language", "label": "Face the camera"},
+        {"at": 1.0, "category": "voice_tone", "label": "Speak up"},
+        {"at": 1.85, "category": "filler", "label": "Filler: you know"},
+    ]
 
 
 def test_transcript_and_filler_counts_from_speech(vosk_model, tmp_path):

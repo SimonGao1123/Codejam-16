@@ -11,32 +11,32 @@ export class WebcamRecorder {
   private pending: Promise<void> = Promise.resolve()
   private stopped: Promise<void> = Promise.resolve()
 
-  get active(): boolean {
-    return this.recorder !== null
-  }
-
-  /** Starts recording `stream`; resolves with the folder + base name the files are saved under. */
-  async start(stream: MediaStream, t: number): Promise<string> {
-    const { base } = await window.api.webcamRecorder.start()
-    const mimeType = [
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp8,opus',
-      'video/webm'
-    ].find((m) => MediaRecorder.isTypeSupported(m))
+  /** Starts recording and returns its start time on the renderer's monotonic clock. */
+  async start(stream: MediaStream): Promise<number> {
+    const formats = stream.getVideoTracks().length
+      ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+      : ['audio/webm;codecs=opus', 'audio/webm']
+    const mimeType = formats.find((m) => MediaRecorder.isTypeSupported(m))
     const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    const { base } = await window.api.webcamRecorder.start()
     recorder.ondataavailable = (e) => {
       // keep chunks in order even though arrayBuffer() is async
       this.pending = this.pending.then(async () => {
         if (e.data.size) window.api.webcamRecorder.chunk(new Uint8Array(await e.data.arrayBuffer()))
       })
     }
-    // first line ties the .jsonl clock (t) to the start of the video
-    window.api.webcamRecorder.line(JSON.stringify({ type: 'recording', t, video: `${base}.webm` }))
     // resolves however the recorder stops: stop() below, or by itself when the camera tracks end
     this.stopped = new Promise((resolve) => (recorder.onstop = () => resolve()))
-    recorder.start(CHUNK_MS)
+    const t = performance.now() / 1000
+    try {
+      recorder.start(CHUNK_MS)
+    } catch (error) {
+      await window.api.webcamRecorder.stop()
+      throw error
+    }
+    window.api.webcamRecorder.line(JSON.stringify({ type: 'recording', t, video: `${base}.webm` }))
     this.recorder = recorder
-    return base
+    return t
   }
 
   log(msg: ClientMessage): void {
@@ -44,13 +44,18 @@ export class WebcamRecorder {
   }
 
   /** Stops and finishes writing; resolves with the saved file paths. */
-  async stop(): Promise<{ video: string; data: string } | null> {
+  async stop(): Promise<{ video: string; data: string; playbackUrl: string } | null> {
     const recorder = this.recorder
     if (!recorder) return null
     this.recorder = null
     if (recorder.state !== 'inactive') recorder.stop()
     await this.stopped
-    await this.pending
+    try {
+      await this.pending
+    } catch (error) {
+      await window.api.webcamRecorder.stop()
+      throw error
+    }
     return window.api.webcamRecorder.stop()
   }
 }

@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react'
 
 import type { AudioAnalysis } from '../audio/useAudioAnalysis'
 import { FILLER_WORDS } from '../audio/audioProtocol'
-import PitchGraph from './PitchGraph'
+import VoiceGraph from './VoiceGraph'
 
 type Props = {
   speech: AudioAnalysis
@@ -39,13 +39,21 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
                 : 'Starts with your practice session'}
           </span>
         </div>
-        <PitchGraph
+        <VoiceGraph
+          metric="pitch"
           samples={speech.pitch}
           typicalHz={voice?.typical_hz ?? null}
           spikeHz={voice?.spike_hz ?? null}
           calibrated={voice?.calibrated ?? false}
           live={listening}
         />
+      </section>
+      <section className="ph-pitch" aria-labelledby="ph-volume-heading">
+        <div className="ph-card-head">
+          <h2 id="ph-volume-heading">Microphone volume</h2>
+          {voice && <span>{voice.volume_dbfs.toFixed(0)} dBFS</span>}
+        </div>
+        <VoiceGraph metric="volume" samples={speech.volume} live={listening} />
       </section>
       <section className="ph-transcript" aria-labelledby="ph-transcript-heading">
         <div className="ph-card-head">

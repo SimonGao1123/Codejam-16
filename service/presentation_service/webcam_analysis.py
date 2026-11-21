@@ -318,6 +318,37 @@ class WebcamAnalyzer:
         self.rules = {"tilt": self.tilt_alert, "look_down": self.down_alert, "face": self.face_alert,
                       "hands_missing": self.missing_alert, "still": self.still_alert,
                       "fast": self.fast_alert, "repeat": self.repeat_alert}
+        self.scoring = False
+        self.scoring_started_at = None
+        self.incidents = {}
+        self.checkpoints = []
+        self._incident_since = {}
+        self._counted_incidents = set()
+
+    def start_scoring(self, started_at=None):
+        self.scoring = True
+        self.scoring_started_at = started_at
+        self.motion.clear()
+        self.both_seen_at = -math.inf
+        self.incidents.clear()
+        self.checkpoints.clear()
+        self._incident_since.clear()
+        self._counted_incidents.clear()
+
+    def _score_frame(self, now, conditions):
+        """Count sustained conditions once, independently of banner visibility."""
+        for rule, bad in conditions.items():
+            if bad is not None:
+                self.incidents.setdefault(rule, 0)
+            if not bad:
+                self._incident_since.pop(rule, None)
+                self._counted_incidents.discard(rule)
+                continue
+            since = self._incident_since.setdefault(rule, now)
+            if rule not in self._counted_incidents and now - since >= self.rules[rule].hold_s:
+                self.incidents[rule] += 1
+                self._counted_incidents.add(rule)
+                self.checkpoints.append((since, "body_language", self.rules[rule].text))
 
     def apply_settings(self, rules):
         """Live alerts settings: {rule id: {enabled, threshold, duration, cooldown}}."""
@@ -338,6 +369,9 @@ class WebcamAnalyzer:
     def process(self, msg, extra_lines=(), extra_alerts=()):
         """One `frame` message -> one `state` message. extra_* come from the audio side."""
         now, w, h = msg["t"], msg["width"], msg["height"]
+        if self.scoring and (now < self.last_t or now - self.last_t > HAND_GRACE_S):
+            self._incident_since.clear()
+            self._counted_incidents.clear()
         self.last_t = now
         pose = points(msg["pose"]) if msg.get("pose") else None
         hands = msg.get("hands") or []
@@ -353,6 +387,7 @@ class WebcamAnalyzer:
         tilt = pitch = eyes = None
         wrists = [None, None]
         base = self.calib.baseline
+        calibrating = self.calib.recording
         hand_points = [points(hand["landmarks"]) for hand in hands]
 
         # shoulders + hand motion (pose)
@@ -426,6 +461,16 @@ class WebcamAnalyzer:
 
         # alerts are suppressed while calibrating so getting into position doesn't trigger them
         alerts = []
+        if self.scoring and (self.scoring_started_at is None or now >= self.scoring_started_at):
+            conditions = {
+                "face": not face,
+                "tilt": tilt_bad if base and pose else None,
+                "look_down": down_bad if base and face else None,
+                "still": still if pose and both_recent else None,
+                "repeat": repeating if pose and both_recent else None,
+                "fast": fast if any(wrists) else None,
+            }
+            self._score_frame(now, dict.fromkeys(conditions) if calibrating else conditions)
         if not self.calib.recording:
             checks = ((self.face_alert, not face), (self.tilt_alert, tilt_bad), (self.down_alert, down_bad),
                       (self.missing_alert, not both_hands),

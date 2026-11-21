@@ -12,7 +12,7 @@ const api = {
       ipcRenderer.invoke('webcam-recorder:start'),
     chunk: (chunk: Uint8Array): void => ipcRenderer.send('webcam-recorder:chunk', chunk),
     line: (line: string): void => ipcRenderer.send('webcam-recorder:line', line),
-    stop: (): Promise<{ video: string; data: string } | null> =>
+    stop: (): Promise<{ video: string; data: string; playbackUrl: string } | null> =>
       ipcRenderer.invoke('webcam-recorder:stop')
   }
 }
