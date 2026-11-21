@@ -50,8 +50,8 @@ Hiding live banners does not turn off scoring.
 
 Speaking pace is measured from final transcript word timings. Its four points are split equally
 between a moderate average pace and consistency across roughly 20-word samples. The default target
-is 140 WPM (full pace credit from 120–160 WPM); users can customize that target under **Preferred
-speaking pace** in Alert and scoring settings. Sessions with fewer than 20 recognized words or less
+is 140 WPM (full pace credit from 120–160 WPM); users can customize that target under **Speaking
+pace** in Alert and scoring settings. Sessions with fewer than 20 recognized words or less
 than eight seconds of active speech leave pace unmeasured.
 
 ### `voice`: every 100 ms
@@ -139,6 +139,11 @@ The audio side posts alerts that the webcam side adds to its `alerts` banners fo
 `Speak up` (too quiet or paused too long), `Steady your volume`, `Steady your pitch`, and
 `Filler: um` (etc.) each time a filler is detected. The current voice reading also appears as a
 status line (`voice: 182 Hz  -31 dBFS`).
+
+Once enough transcript has accumulated to make a reliable estimate, the `pace` rule also posts
+`Pick up the pace` below the configured target band and `Slow down` above it. Its **Target pace**
+slider defaults to 140 WPM, with a 20 WPM comfortable band on either side; the cooldown prevents
+the same cue from repeatedly interrupting the presentation.
 
 ## How the transcript and fillers work
 

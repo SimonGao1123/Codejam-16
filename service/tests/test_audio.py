@@ -97,6 +97,26 @@ def test_pace_is_not_scored_without_enough_transcript_data():
     assert score_presentation(pace=None)["categories"]["speaking_pace"]["points"] is None
 
 
+@pytest.mark.parametrize(
+    ("seconds_per_word", "expected_alert"),
+    [
+        (0.7, "Pick up the pace"),
+        (0.25, "Slow down"),
+    ],
+)
+def test_out_of_range_pace_posts_the_matching_live_alert(
+    vosk_model, seconds_per_word, expected_alert
+):
+    board = AlertBoard()
+    analyzer = AudioAnalyzer(vosk_model, None, board)
+    # Forty words provide enough active speech for a reliable live estimate.
+    analyzer.transcriber.word_times = [
+        (i * seconds_per_word, i * seconds_per_word + 0.1) for i in range(40)
+    ]
+    analyzer.check_pace()
+    assert expected_alert in board.active()
+
+
 def test_session_score_has_recording_relative_checkpoints(vosk_model):
     session = Session(vosk_model)
     session.audio.set_embedder(lambda texts: np.ones((len(texts), 1), dtype=np.float32))

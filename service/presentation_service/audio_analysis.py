@@ -21,6 +21,7 @@ VOICE_RULES = {VoiceMonitor.VOLUME_SPIKE: ("volume", "volume_spike"),
 SCRIPT_RULES = {"jump": "out_of_order", "back": "out_of_order", "off_topic": "off_script",
                 "stuck": "stuck"}             # script event kind -> Live alerts rule id
 SCRIPT_CHECK_S = 1.5            # compare the transcript with the script at most this often
+PACE_COMFORT_BAND_WPM = 20       # matches the scoring rubric's full-credit band
 
 
 class AudioAnalyzer:
@@ -231,6 +232,7 @@ class AudioAnalyzer:
         self.speech_pos -= done
 
         if transcript_changed:
+            self.check_pace()
             out.append(self.transcript_message(new_sentences, new_fillers))
         if self.script_chunks:
             out += self.check_script()
@@ -291,6 +293,17 @@ class AudioAnalyzer:
             return min(200, max(80, float(target)))
         except (TypeError, ValueError):
             return 140.0
+
+    def check_pace(self):
+        """Post a live cue after each finalized transcript update when pace is out of range."""
+        summary = self.pace_summary()
+        if summary is None:
+            return
+        pace, target = summary["average_wpm"], self.pace_target_wpm()
+        if pace < target - PACE_COMFORT_BAND_WPM:
+            self.post_rule("pace", "Pick up the pace")
+        elif pace > target + PACE_COMFORT_BAND_WPM:
+            self.post_rule("pace", "Slow down")
 
     def _recording_clock(self, sample):
         """Convert an analyzer sample offset to the renderer's monotonic clock."""

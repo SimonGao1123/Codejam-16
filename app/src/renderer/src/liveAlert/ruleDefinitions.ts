@@ -11,9 +11,9 @@ type RuleDefinition = {
   duration: number // seconds the problem has to last before the alert shows
   cooldown: number // seconds before the same alert can show again
   instant?: boolean // fires on a single event (a filler word): no minimum duration
-  scoringOnly?: boolean // setting affects the end-of-session rubric, not a live alert
   // threshold slider; rules without one just turn on/off
   unit?: string
+  label?: string
   min?: number
   max?: number
   step?: number
@@ -32,6 +32,20 @@ export const rules = [
     value: 8,
     duration: 0.3,
     cooldown: 3
+  },
+  {
+    id: 'pace',
+    group: 'Voice',
+    name: 'Speaking pace',
+    cue: 'Pick up the pace',
+    unit: 'words per minute',
+    min: 80,
+    max: 200,
+    value: 140,
+    duration: 0,
+    cooldown: 15,
+    instant: true,
+    label: 'Target pace'
   },
   {
     id: 'pitch',
@@ -136,19 +150,6 @@ export const rules = [
     name: 'Filler words',
     cue: 'Filler: um',
     instant: true,
-    duration: 0,
-    cooldown: 0
-  },
-  {
-    id: 'pace',
-    group: 'Speech',
-    name: 'Preferred speaking pace',
-    cue: '',
-    unit: 'words per minute',
-    min: 80,
-    max: 200,
-    value: 140,
-    scoringOnly: true,
     duration: 0,
     cooldown: 0
   },
