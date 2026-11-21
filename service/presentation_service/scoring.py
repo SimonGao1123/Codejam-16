@@ -30,9 +30,9 @@ BODY_RULES = {
 }
 MAX_SCORE = FILLER_MAX_POINTS + sum(rule[1] for rule in (*VOICE_RULES.values(), *BODY_RULES.values()))
 PACE_MAX_POINTS = 4
-# Presentation guidance varies with context.  A 140 WPM centre and a 20 WPM
+# Presentation guidance varies with context.  A 140 WPM centre and a 40 WPM
 # comfortable band are sensible defaults; the centre is configurable in the UI.
-PACE_COMFORT_BAND_WPM = 20
+PACE_COMFORT_BAND_WPM = 40
 PACE_ZERO_CREDIT_DISTANCE_WPM = 60
 PACE_CONSISTENT_CV = 0.15
 PACE_INCONSISTENT_CV = 0.45

@@ -97,6 +97,37 @@ def test_pace_is_not_scored_without_enough_transcript_data():
     assert score_presentation(pace=None)["categories"]["speaking_pace"]["points"] is None
 
 
+def test_current_wpm_uses_recent_timed_words(vosk_model):
+    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+    analyzer.transcriber.word_times = [(i * 0.5, i * 0.5 + 0.2) for i in range(20)]
+    assert analyzer.current_wpm() == pytest.approx(123.7, abs=0.1)
+
+
+def test_live_wpm_uses_partial_transcript_history(vosk_model):
+    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+    analyzer.transcriber.pace_history.extend([(0, 0), (4, 8), (8, 18)])
+    analyzer.transcriber.last_voiced_at = 8
+    assert analyzer.transcriber.live_wpm() == 135
+
+
+def test_live_wpm_is_unavailable_during_a_pause(vosk_model):
+    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+    analyzer.transcriber.pace_history.extend([(0, 0), (4, 8), (8, 18)])
+    analyzer.transcriber.last_voiced_at = 6
+    assert analyzer.transcriber.live_wpm() is None
+
+
+def test_final_pace_excludes_a_presentation_pause(vosk_model):
+    analyzer = AudioAnalyzer(vosk_model, None, AlertBoard())
+    # Two ten-word phrases at the same rate, separated by a five-second pause.
+    # The pause must not be counted as slow speech in the final pace score.
+    analyzer.transcriber.word_times = [
+        *((i * 0.5, i * 0.5 + 0.2) for i in range(10)),
+        *((10 + i * 0.5, 10 + i * 0.5 + 0.2) for i in range(10)),
+    ]
+    assert analyzer.pace_summary()["average_wpm"] == pytest.approx(127.7, abs=0.1)
+
+
 @pytest.mark.parametrize(
     ("seconds_per_word", "expected_alert"),
     [

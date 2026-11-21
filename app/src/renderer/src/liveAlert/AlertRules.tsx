@@ -126,7 +126,18 @@ export default function AlertRules({
               onChange={(event) => updateRule('pace', { threshold: event.target.valueAsNumber })}
             />
           </label>
-          <p>Shows “Pick up the pace” or “Slow down” outside a 20 WPM band.</p>
+          <label className="la-pace-cooldown">
+            Alert cooldown <span>{paceSettings.cooldown}s</span>
+            <input
+              type="range"
+              min="1"
+              max="30"
+              step="1"
+              value={paceSettings.cooldown}
+              onChange={(event) => updateRule('pace', { cooldown: event.target.valueAsNumber })}
+            />
+          </label>
+          <p>Shows “Pick up the pace” or “Slow down” outside a 40 WPM band.</p>
         </section>
       </div>
     </section>

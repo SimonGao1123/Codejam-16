@@ -43,7 +43,7 @@ export const rules = [
     max: 200,
     value: 140,
     duration: 0,
-    cooldown: 15,
+    cooldown: 5,
     instant: true,
     label: 'Target pace'
   },

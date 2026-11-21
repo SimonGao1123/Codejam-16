@@ -9,7 +9,7 @@ export interface VoiceSample {
 
 type Props = {
   samples: React.RefObject<VoiceSample[]>
-  metric: 'pitch' | 'volume'
+  metric: 'pitch' | 'volume' | 'wpm'
   typicalHz?: number | null
   spikeHz?: number | null
   calibrated?: boolean
@@ -19,7 +19,8 @@ type Props = {
 export const VOICE_WINDOW_S = 15
 const SCALES = {
   pitch: { ticks: [50, 100, 200, 300, 400, 500], unit: 'Hz' },
-  volume: { ticks: [-80, -60, -40, -20, 0], unit: 'dBFS' }
+  volume: { ticks: [-80, -60, -40, -20, 0], unit: 'dBFS' },
+  wpm: { ticks: [0, 80, 120, 160, 200, 240], unit: 'WPM' }
 }
 const JOIN_S = 0.25 // readings further apart than this aren't joined (a pause in speech)
 const COLORS = {
@@ -93,10 +94,14 @@ function render(
   if (right <= left || bottom <= top) return
 
   const last = samples.at(-1)
-  const end = metric === 'pitch' && lines.live ? performance.now() / 1000 : (last?.t ?? 0)
+  const end = (metric === 'pitch' || metric === 'wpm') && lines.live
+    ? performance.now() / 1000
+    : (last?.t ?? 0)
   // Let short volume recordings fill the chart, then scroll once 15 seconds have been captured.
   const windowSeconds =
-    metric === 'volume' && last
+    metric === 'wpm' && samples.length
+      ? Math.max(VOICE_WINDOW_S, end - samples[0].t)
+      : metric === 'volume' && last
       ? Math.min(VOICE_WINDOW_S, Math.max(0.3, end - samples[0].t))
       : VOICE_WINDOW_S
   const start = end - windowSeconds
@@ -174,7 +179,7 @@ function render(
   ctx.stroke()
   ctx.restore()
   // single isolated readings would be invisible as a path; mark the latest one
-  if (last && last.value !== null && last.t >= start) {
+  if (last && last.value !== null && last.t >= start && last.t >= end - JOIN_S) {
     ctx.fillStyle = COLORS.trace
     ctx.beginPath()
     ctx.arc(x(last.t), y(last.value), 3, 0, 2 * Math.PI)

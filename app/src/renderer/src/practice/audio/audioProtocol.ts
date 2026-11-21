@@ -33,6 +33,7 @@ export interface VoiceMessage {
   captured_at?: number | null // renderer monotonic seconds of the latest measured sample
   pitch_hz: number | null // null when not voiced (silence, breath)
   pitches: (number | null)[] // every 50 ms reading since the last message, oldest first
+  wpm: number | null // provisional WPM from Vosk partial words; refreshes every 100 ms
   volume_dbfs: number
   typical_hz: number | null // calibrated pitch, or the running typical pitch before calibrating
   spike_hz: number | null // a "Steady your pitch" alert fires above this
@@ -48,6 +49,7 @@ export interface TranscriptMessage {
   new_fillers: FillerWord[] // fillers detected since the last message
   fillers: Record<FillerWord, number> // running totals for the session
   total: number
+  wpm: number | null // recent rate, including provisional Vosk partial words
 }
 
 export interface ScriptLoadedMessage {

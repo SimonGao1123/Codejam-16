@@ -50,7 +50,7 @@ Hiding live banners does not turn off scoring.
 
 Speaking pace is measured from final transcript word timings. Its four points are split equally
 between a moderate average pace and consistency across roughly 20-word samples. The default target
-is 140 WPM (full pace credit from 120–160 WPM); users can customize that target under **Speaking
+is 140 WPM (full pace credit from 100–180 WPM); users can customize that target under **Speaking
 pace** in Alert and scoring settings. Sessions with fewer than 20 recognized words or less
 than eight seconds of active speech leave pace unmeasured.
 
@@ -79,7 +79,8 @@ status, such as "Voice: keep talking normally (1.5 / 3 s)" or "Voice calibrated:
   "partial": "the main idea is",
   "new_fillers": ["um"],
   "fillers": {"um": 1, "uh": 0, "like": 0, "you know": 0, "so": 1, "filler?": 0},
-  "total": 2
+  "total": 2,
+  "wpm": 138.4
 }
 ```
 
@@ -89,6 +90,7 @@ status, such as "Voice: keep talking normally (1.5 / 3 s)" or "Voice calibrated:
 | `partial` | Words of the sentence still being spoken; **replaces** the previous partial |
 | `new_fillers` | Fillers detected since the last message (Electron flashes the counter) |
 | `fillers`, `total` | Running counts for the session, including fillers already heard in the current partial |
+| `wpm` | Recent words per minute; Vosk partial words make this responsive during a phrase, and it is `null` while the speaker pauses |
 
 Filler markers inside sentences: `[um]` / `[uh]` = detected and confirmed by Whisper; `[um?]` =
 sounded like a filler but Whisper wasn't available to confirm (counted as `filler?`).
@@ -142,7 +144,7 @@ status line (`voice: 182 Hz  -31 dBFS`).
 
 Once enough transcript has accumulated to make a reliable estimate, the `pace` rule also posts
 `Pick up the pace` below the configured target band and `Slow down` above it. Its **Target pace**
-slider defaults to 140 WPM, with a 20 WPM comfortable band on either side; the cooldown prevents
+slider defaults to 140 WPM, with a 40 WPM comfortable band on either side; the cooldown prevents
 the same cue from repeatedly interrupting the presentation.
 
 ## How the transcript and fillers work

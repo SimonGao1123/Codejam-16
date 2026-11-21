@@ -81,14 +81,24 @@ export function drawLandmarks(ctx: CanvasRenderingContext2D, frame: FrameMessage
 export function drawOverlay(
   ctx: CanvasRenderingContext2D,
   state: StateMessage | null,
-  local: { fps: number; handsSeen: number; connected: boolean },
+  local: {
+    fps: number
+    handsSeen: number
+    connected: boolean
+    wpm: number | null
+    wpmUpdatedAt: number | null
+  },
   alertStyle: Style
 ): void {
   const { width: w, height: h } = ctx.canvas
   let y = 28
+  const freshWpm =
+    local.wpmUpdatedAt !== null && performance.now() / 1000 - local.wpmUpdatedAt < 1
+      ? local.wpm
+      : null
   outlined(
     ctx,
-    `FPS ${local.fps.toFixed(0)}   hands seen: ${local.handsSeen}`,
+    `FPS ${local.fps.toFixed(0)}   hands seen: ${local.handsSeen}   WPM: ${freshWpm?.toFixed(0) ?? '--'}`,
     12,
     y,
     COLORS.white,

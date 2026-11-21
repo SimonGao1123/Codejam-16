@@ -28,10 +28,13 @@ export interface AudioAnalysis {
   partial: string
   fillers: Record<FillerWord, number>
   total: number
+  wpm: number | null
+  wpmUpdatedAt: number | null
   flash: Partial<Record<FillerWord, number>> // fillers counted in the last FLASH_MS
   voice: VoiceMessage | null
   pitch: React.RefObject<VoiceSample[]>
   volume: React.RefObject<VoiceSample[]>
+  wpmSamples: React.RefObject<VoiceSample[]>
   scriptChunks: string[] // the script as Python split it ([] = no script)
   scriptReady: boolean // comparison model loaded
   scriptPosition: ScriptPositionMessage | null
@@ -47,6 +50,7 @@ export function useAudioAnalysis(
   const clientRef = useRef<AudioAnalysisClient | null>(null)
   const pitchRef = useRef<VoiceSample[]>([])
   const volumeRef = useRef<VoiceSample[]>([])
+  const wpmRef = useRef<VoiceSample[]>([])
   const sessionNumber = useRef(0)
   const pendingScores = useRef<number[]>([])
   const [connected, setConnected] = useState(false)
@@ -54,6 +58,8 @@ export function useAudioAnalysis(
   const [partial, setPartial] = useState('')
   const [fillers, setFillers] = useState(NO_FILLERS)
   const [total, setTotal] = useState(0)
+  const [wpm, setWpm] = useState<number | null>(null)
+  const [wpmUpdatedAt, setWpmUpdatedAt] = useState<number | null>(null)
   const [flash, setFlash] = useState<Partial<Record<FillerWord, number>>>({})
   const [voice, setVoice] = useState<VoiceMessage | null>(null)
   const [scriptChunks, setScriptChunks] = useState<string[]>([])
@@ -72,8 +78,12 @@ export function useAudioAnalysis(
     }
     client.onMessage = (msg) => {
       if (msg.type === 'voice') {
-        setVoice(msg)
         const now = performance.now() / 1000
+        setVoice(msg)
+        setWpm(msg.wpm)
+        const wpmTime = msg.captured_at ?? now
+        setWpmUpdatedAt(wpmTime)
+        wpmRef.current.push({ t: wpmTime, value: msg.wpm })
         const samples = pitchRef.current
         // one reading per 50 ms block; the newest is "now"
         msg.pitches.forEach((value, i) =>
@@ -101,6 +111,7 @@ export function useAudioAnalysis(
       setPartial(msg.partial)
       setFillers(msg.fillers)
       setTotal(msg.total)
+      setWpm(msg.wpm)
       if (msg.new_fillers.length) {
         const now = Date.now()
         setFlash((f) => ({ ...f, ...Object.fromEntries(msg.new_fillers.map((w) => [w, now])) }))
@@ -139,10 +150,13 @@ export function useAudioAnalysis(
     setPartial('')
     setFillers(NO_FILLERS)
     setTotal(0)
+    setWpm(null)
+    setWpmUpdatedAt(null)
     setVoice(null)
     setScriptPosition(null)
     pitchRef.current = []
     volumeRef.current = []
+    wpmRef.current = []
     if (latestScriptRef.current !== scriptRef.current) {
       // started within the debounce of an edit: send the script before the session begins
       scriptRef.current = latestScriptRef.current
@@ -185,10 +199,13 @@ export function useAudioAnalysis(
     partial,
     fillers,
     total,
+    wpm,
+    wpmUpdatedAt,
     flash,
     voice,
     pitch: pitchRef,
     volume: volumeRef,
+    wpmSamples: wpmRef,
     scriptChunks,
     scriptReady,
     scriptPosition

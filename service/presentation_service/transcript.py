@@ -33,6 +33,8 @@ MIN_RUN = 0.15               # continuous voiced sound inside a gap = suspicious
 VAD_LEVEL = 2                # 0-3, higher = stricter about what counts as speech
 KEEP_SECONDS = 60            # how much history (voiced + audio) to keep
 MAX_FRAMES = int(KEEP_SECONDS / FRAME_SEC)
+LIVE_WPM_WINDOW_S = 12       # short enough to react, long enough not to jump word-by-word
+LIVE_WPM_PAUSE_S = 0.8        # show N/A promptly when the speaker has paused
 
 SUSPECT = {"a", "im", "ha", "ah", "on", "huh", "arm", "i'm"}        # near-misses for um/uh
 MIN_DUR = 0.25               # a suspect word this long is probably a filler
@@ -78,6 +80,10 @@ class Transcriber:
         # final-word timings so the session score can measure speaking pace without
         # treating a deliberate pause between ideas as speech.
         self.word_times = []                  # [(start, end), ...]
+        # (audio clock, words recognized so far including Vosk's current partial).
+        # This is intentionally provisional and powers only the live display.
+        self.pace_history = deque()
+        self.last_voiced_at = None
         self.totals = {f: 0 for f in FILLERS} | {"filler?": 0}
         self.filler_checkpoints = []
         self.alerted = {f: 0 for f in FILLERS}    # fillers already alerted from this phrase's partials
@@ -138,7 +144,10 @@ class Transcriber:
         ("partial", text), ("sentence", text), ("filler", word)."""
         self.frame_count += 1
         self.audio.append(frame)
-        self.voiced.append(self.vad.is_speech(frame, SR))
+        is_voiced = self.vad.is_speech(frame, SR)
+        self.voiced.append(is_voiced)
+        if is_voiced:
+            self.last_voiced_at = self.frame_count * FRAME_SEC
         if len(self.voiced) > MAX_FRAMES:
             self.voiced.popleft()
             self.audio.popleft()                 # trim together so frame numbers match
@@ -147,12 +156,41 @@ class Transcriber:
         if self.recognizer.AcceptWaveform(frame):
             events = self.finish_phrase(json.loads(self.recognizer.Result()))
             self.last_partial = ""
-            return events + [("partial", "")]
-        partial = json.loads(self.recognizer.PartialResult()).get("partial", "")
-        if partial == self.last_partial:
-            return []
-        self.last_partial = partial
-        return [("partial", partial)] + [("filler", w) for w in self.new_fillers(count_fillers(partial))]
+            events += [("partial", "")]
+        else:
+            partial = json.loads(self.recognizer.PartialResult()).get("partial", "")
+            if partial == self.last_partial:
+                events = []
+            else:
+                self.last_partial = partial
+                events = [("partial", partial)] + [
+                    ("filler", w) for w in self.new_fillers(count_fillers(partial))
+                ]
+        self._record_live_pace()
+        return events
+
+    def _record_live_pace(self):
+        """Remember the partial transcript count at this audio-clock position."""
+        now = self.frame_count * FRAME_SEC
+        words = len(self.word_times) + len(self.last_partial.split())
+        self.pace_history.append((now, words))
+        while self.pace_history and self.pace_history[0][0] < now - LIVE_WPM_WINDOW_S - 1:
+            self.pace_history.popleft()
+
+    def live_wpm(self, minimum_seconds=4, window_seconds=LIVE_WPM_WINDOW_S):
+        """Smoothed, provisional WPM from Vosk partials; None until it has enough context."""
+        if not self.pace_history:
+            return None
+        now, words_now = self.pace_history[-1]
+        if self.last_voiced_at is None or now - self.last_voiced_at > LIVE_WPM_PAUSE_S:
+            return None
+        start = next((sample for sample in self.pace_history if sample[0] >= now - window_seconds),
+                     self.pace_history[0])
+        elapsed = now - start[0]
+        word_change = words_now - start[1]
+        if elapsed < minimum_seconds or word_change < 3:
+            return None
+        return round(max(0, word_change) * 60 / elapsed, 1)
 
     def flush(self):
         """End of the session: finish whatever phrase is still open."""

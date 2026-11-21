@@ -218,6 +218,9 @@ body,
   color: #c4bfda;
   font-size: 12px;
 }
+.la-pace-cooldown {
+  margin-top: 14px;
+}
 .la-styles {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
