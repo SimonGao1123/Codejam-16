@@ -17,7 +17,11 @@ export default function SessionResults({
     <section className="ph-results" aria-labelledby="ph-results-heading" aria-live="polite">
       <div className="ph-card-head">
         <h2 id="ph-results-heading">Practice results</h2>
-        {result.score !== null && <strong>{result.score} / {result.max_score}</strong>}
+        {result.score !== null && (
+          <strong>
+            {result.score} / {result.max_score}
+          </strong>
+        )}
       </div>
       {result.score === null ? (
         <p>No audio or webcam data was available to score this session.</p>
@@ -35,7 +39,10 @@ export default function SessionResults({
                       ? 'Not measured'
                       : `${breakdown.points} / ${breakdown.max_points}`}
                     {pace?.average_wpm !== undefined && (
-                      <small> · {pace.average_wpm} WPM (target {pace.target_wpm} WPM)</small>
+                      <small>
+                        {' '}
+                        · {pace.average_wpm} WPM (target {pace.target_wpm} WPM)
+                      </small>
                     )}
                     {projection?.margin_db !== undefined && (
                       <small> · {projection.margin_db.toFixed(0)} dB above the room</small>
@@ -46,7 +53,9 @@ export default function SessionResults({
             })}
           </dl>
           {result.measured_points < result.max_score && (
-            <p>Score based on {result.measured_points} of {result.max_score} possible rubric points.</p>
+            <p>
+              Score based on {result.measured_points} of {result.max_score} possible rubric points.
+            </p>
           )}
           {result.feedback.length > 0 ? (
             <ul>

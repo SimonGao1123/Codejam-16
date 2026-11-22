@@ -4,10 +4,36 @@ import type { ClientMessage } from './camera/webcamProtocol'
 
 const COUNTDOWN_SECONDS = 3
 
+export interface PracticeSessionState {
+  camera: boolean
+  setCamera: React.Dispatch<React.SetStateAction<boolean>>
+  microphone: boolean
+  setMicrophone: React.Dispatch<React.SetStateAction<boolean>>
+  running: boolean
+  startedAt: number | null
+  seconds: number
+  finished: boolean
+  pending: boolean
+  preparing: boolean
+  countdown: number | null
+  waitingForCalibration: boolean
+  saving: boolean
+  playbackUrl: string | null
+  recordingDuration: number
+  recordingError: string
+  logWebcam: (message: ClientMessage) => void
+  deviceError: string
+  cameraStream: MediaStream | null
+  micStream: MediaStream | null
+  startPractice: () => Promise<void>
+  endPractice: () => void
+  cancelPractice: () => void
+}
+
 /** `calibrated`: this session's posture calibration has finished (from WebcamControls). With the
  *  camera on, the session (timer, recording, analysis, scoring) only starts once it has, after the
  *  get-ready countdown; the two run at the same time. */
-export function usePracticeSession(calibrated: boolean) {
+export function usePracticeSession(calibrated: boolean): PracticeSessionState {
   const [camera, setCamera] = useState(true)
   const [microphone, setMicrophone] = useState(true)
   const [started, setStarted] = useState<number | null>(null)

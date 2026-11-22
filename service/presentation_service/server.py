@@ -113,7 +113,8 @@ async def audio_connection(ws, session):
                 started_at = msg.get("started_at")
                 started_monotonic = time.monotonic()
                 session.scoring_client = ws
-                session.webcam.start_scoring(started_at)
+                mode = msg.get("mode")
+                session.webcam.start_scoring(started_at, mode=mode)
                 await run(session.audio.reset)
             elif msg["type"] == "session_end" and session.scoring_client is ws:
                 session.scoring_client = None
@@ -121,24 +122,48 @@ async def audio_connection(ws, session):
                 body_incidents = session.webcam.incidents.copy()
                 body_checkpoints = session.webcam.checkpoints.copy()
                 # length of the presentation, used by the scorer to scale deductions
-                duration_seconds = (
-                    time.monotonic() - started_monotonic if started_monotonic is not None else None
-                )
+                duration_seconds = msg.get("duration_seconds")
+                if duration_seconds is None and started_monotonic is not None:
+                    duration_seconds = time.monotonic() - started_monotonic
 
                 def finish_and_score():
                     messages = session.audio.finish()
                     transcript = messages[0]
+                    voice_incidents = {
+                        k: v for k, v in session.audio.voice_incidents.items()
+                        if session.audio.enabled(k)
+                    }
+                    scored_body_incidents = {
+                        k: v for k, v in body_incidents.items()
+                        if session.webcam.rules.get(k) and session.webcam.rules[k].enabled
+                    }
+                    score_fillers = (
+                        transcript["fillers"]
+                        if session.audio.has_speech_samples and session.audio.enabled("filler")
+                        else None
+                    )
+                    score_pace = (
+                        session.audio.pace_summary()
+                        if session.audio.enabled("pace") or session.audio.enabled("pace_avg")
+                        else None
+                    )
+                    score_script = (
+                        session.audio.script_match()
+                        if session.audio.enabled("off_script")
+                        else None
+                    )
+
                     report = score_presentation(
-                        filler_counts=transcript["fillers"] if session.audio.has_speech_samples else None,
-                        voice_incidents=session.audio.voice_incidents,
-                        body_incidents=body_incidents,
-                        pace=session.audio.pace_summary(),
+                        filler_counts=score_fillers,
+                        voice_incidents=voice_incidents,
+                        body_incidents=scored_body_incidents,
+                        pace=score_pace,
                         pace_target_wpm=session.audio.desired_wpm(),
                         duration_seconds=duration_seconds,
                         expected_minutes=(session.audio.target_seconds / 60
                                           if session.audio.target_seconds else None),
                         volume=session.audio.volume_summary(),
-                        script_match=session.audio.script_match()
+                        script_match=score_script
                     )
                     checkpoints = []
                     if started_at is not None:
@@ -170,6 +195,8 @@ async def audio_connection(ws, session):
                 await ws.send(json.dumps(await run(session.audio.pace_target_message)))   # word count changed
             elif msg["type"] == "target_time":
                 await ws.send(json.dumps(await run(session.audio.set_target_time, msg.get("seconds"))))
+            elif msg["type"] == "settings":
+                session.apply_settings(msg["rules"])
     finally:
         if session.scoring_client is ws:
             session.scoring_client = None

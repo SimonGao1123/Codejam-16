@@ -5,9 +5,11 @@ type Props = {
   url: string
   recordedDuration: number
   checkpoints: PlaybackCheckpoint[]
+  isVideo?: boolean
 }
 
 function clock(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
   const whole = Math.floor(seconds)
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`
 }
@@ -15,7 +17,8 @@ function clock(seconds: number): string {
 export default function PresentationPlayback({
   url,
   recordedDuration,
-  checkpoints
+  checkpoints,
+  isVideo = true
 }: Props): React.JSX.Element {
   const playerRef = useRef<HTMLElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -25,23 +28,38 @@ export default function PresentationPlayback({
   const [muted, setMuted] = useState(false)
   const [volume, setVolume] = useState(1)
   const [error, setError] = useState('')
-  // Streamed WebM files may not carry duration metadata.
-  const duration =
-    Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : recordedDuration
-  const moments = checkpoints.filter(({ at }) => at >= 0 && at <= duration)
+
+  // Streamed WebM files or unprobed files may have non-finite metadata.
+  const rawDuration =
+    Number.isFinite(mediaDuration) && mediaDuration > 0
+      ? mediaDuration
+      : Number.isFinite(recordedDuration) && recordedDuration > 0
+        ? recordedDuration
+        : 0
+  const duration = Math.max(0, rawDuration)
+
+  const moments =
+    duration > 0
+      ? checkpoints.filter(({ at }) => Number.isFinite(at) && at >= 0 && at <= duration)
+      : []
   const markers = new Map<number, PlaybackCheckpoint[]>()
-  for (const checkpoint of moments) {
-    const slot = Math.floor((checkpoint.at / duration) * 40)
-    const group = markers.get(slot)
-    if (group) group.push(checkpoint)
-    else markers.set(slot, [checkpoint])
+  if (duration > 0) {
+    for (const checkpoint of moments) {
+      const slot = Math.floor((checkpoint.at / duration) * 40)
+      const group = markers.get(slot)
+      if (group) group.push(checkpoint)
+      else markers.set(slot, [checkpoint])
+    }
   }
 
   function seek(at: number): void {
     const video = videoRef.current
     if (!video) return
-    video.currentTime = at
-    setPosition(at)
+    if (!Number.isFinite(at)) return
+    const maxDur = duration > 0 ? duration : Number.isFinite(video.duration) ? video.duration : at
+    const target = Math.max(0, Math.min(at, maxDur > 0 ? maxDur : at))
+    video.currentTime = target
+    setPosition(target)
   }
 
   async function togglePlayback(): Promise<void> {
@@ -51,9 +69,16 @@ export default function PresentationPlayback({
       video.pause()
       return
     }
+    // Loop back to beginning if playback finished or near the end
+    if (video.ended || (duration > 0 && video.currentTime >= duration - 0.2)) {
+      video.currentTime = 0
+      setPosition(0)
+    }
     try {
       await video.play()
-    } catch {
+      setError('')
+    } catch (err) {
+      console.warn('Playback error:', err)
       setError('Could not play the recording.')
     }
   }
@@ -67,17 +92,33 @@ export default function PresentationPlayback({
         ref={videoRef}
         src={url}
         playsInline
-        preload="metadata"
-        onDurationChange={(event) => setMediaDuration(event.currentTarget.duration)}
-        onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}
-        onPlay={() => {
+        controls
+        preload="auto"
+        style={{
+          cursor: 'pointer',
+          ...(isVideo === false ? { height: '56px' } : {})
+        }}
+        onClick={(): void => void togglePlayback()}
+        onLoadedMetadata={(event): void => {
+          const d = event.currentTarget.duration
+          if (Number.isFinite(d) && d > 0) setMediaDuration(d)
+        }}
+        onDurationChange={(event): void => {
+          const d = event.currentTarget.duration
+          if (Number.isFinite(d) && d > 0) setMediaDuration(d)
+        }}
+        onTimeUpdate={(event): void => setPosition(event.currentTarget.currentTime)}
+        onPlay={(): void => {
           setPlaying(true)
           setError('')
         }}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-        onError={() => setError('Could not load the recording.')}
-        onVolumeChange={(event) => {
+        onPause={(): void => setPlaying(false)}
+        onEnded={(): void => {
+          setPlaying(false)
+          if (duration > 0) setPosition(duration)
+        }}
+        onError={(): void => setError('Could not load the recording.')}
+        onVolumeChange={(event): void => {
           setMuted(event.currentTarget.muted)
           setVolume(event.currentTarget.volume)
         }}
@@ -88,15 +129,16 @@ export default function PresentationPlayback({
             {[...markers].map(([slot, group]) => {
               const first = group[0]
               const label = group.map((checkpoint) => checkpoint.label).join(', ')
+              const pct = duration > 0 ? (first.at / duration) * 100 : 0
               return (
                 <button
                   type="button"
                   key={slot}
                   className="ph-playback-marker"
-                  style={{ left: `${(first.at / duration) * 100}%` }}
+                  style={{ left: `${Math.min(100, Math.max(0, pct))}%` }}
                   title={`${clock(first.at)} · ${label}`}
                   aria-label={`Jump to ${clock(first.at)}. ${label}`}
-                  onClick={() => seek(first.at)}
+                  onClick={(): void => seek(first.at)}
                 />
               )
             })}
@@ -106,21 +148,23 @@ export default function PresentationPlayback({
             aria-label="Playback position"
             aria-valuetext={`${clock(position)} of ${clock(duration)}`}
             min={0}
-            max={duration}
+            max={duration > 0 ? duration : 100}
             step="any"
-            value={Math.min(position, duration)}
+            value={duration > 0 ? Math.min(position, duration) : position}
             disabled={duration <= 0}
-            onChange={(event) => seek(event.currentTarget.valueAsNumber)}
+            onChange={(event): void => seek(event.currentTarget.valueAsNumber)}
           />
         </div>
         <div className="ph-playback-buttons">
-          <button type="button" onClick={() => void togglePlayback()}>
+          <button type="button" onClick={(): void => void togglePlayback()}>
             {playing ? 'Pause' : 'Play'}
           </button>
-          <span>{clock(position)} / {clock(duration)}</span>
+          <span>
+            {clock(position)} / {clock(duration)}
+          </span>
           <button
             type="button"
-            onClick={() => {
+            onClick={(): void => {
               const video = videoRef.current
               if (video) video.muted = !video.muted
             }}
@@ -134,7 +178,7 @@ export default function PresentationPlayback({
             max={1}
             step={0.05}
             value={volume}
-            onChange={(event) => {
+            onChange={(event): void => {
               const video = videoRef.current
               if (video) {
                 video.volume = event.currentTarget.valueAsNumber
@@ -144,7 +188,7 @@ export default function PresentationPlayback({
           />
           <button
             type="button"
-            onClick={() => {
+            onClick={(): void => {
               const fullscreen = document.fullscreenElement
                 ? document.exitFullscreen()
                 : playerRef.current?.requestFullscreen()
@@ -161,7 +205,7 @@ export default function PresentationPlayback({
             <ul>
               {moments.map(({ at, category, label }, index) => (
                 <li key={`${at}:${category}:${index}`}>
-                  <button type="button" onClick={() => seek(at)}>
+                  <button type="button" onClick={(): void => seek(at)}>
                     {clock(at)} · {label}
                   </button>
                 </li>

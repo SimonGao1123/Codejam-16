@@ -346,14 +346,18 @@ class WebcamAnalyzer:
                       "fast": self.fast_alert, "repeat": self.repeat_alert}
         self.scoring = False
         self.scoring_started_at = None
+        self.scoring_mode = None
+        self.recording_face_samples = []
         self.incidents = {}
         self.checkpoints = []
         self._incident_since = {}
         self._counted_incidents = set()
 
-    def start_scoring(self, started_at=None):
+    def start_scoring(self, started_at=None, mode=None):
         self.scoring = True
         self.scoring_started_at = started_at
+        self.scoring_mode = mode
+        self.recording_face_samples = []
         self.motion.clear()
         self.both_seen_at = -math.inf
         self.incidents.clear()
@@ -512,8 +516,10 @@ class WebcamAnalyzer:
                     rest_circles.append({"x": round((mx + r[0] * width) / w, 4), "y": round((my + r[1] * width) / h, 4),
                                          "r": round(REST_RADIUS * width / w, 4), "active": bool(at_rest)})
             # stillness and repetition only count when both hands are actually in view
-            still = both_recent and (self.motion.activity(1.0) < HAND_STILL or at_rest)
-            repeating = both_recent and repeat > self.limits["repeat"]
+            # in recording mode, stillness counts if any wrist is tracked relative to shoulders
+            is_recording_mode = getattr(self, "scoring_mode", None) == "recording"
+            still = (any(wrists) if is_recording_mode else both_recent) and (self.motion.activity(1.0) < HAND_STILL or at_rest)
+            repeating = (any(wrists) if is_recording_mode else both_recent) and repeat > self.limits["repeat"]
             still_s = now - self.still_alert.bad_since if self.still_alert.bad_since else 0
             lines.append(line(f"hands: speed {speed:.1f}  avg {busy:.1f}  repeat {repeat:.2f}"
                               + (f" ({repeat_where})" if repeat_where and repeat > 0.3 else "")
@@ -534,7 +540,15 @@ class WebcamAnalyzer:
         if face:
             pitch = head_pitch(points(face["landmarks"]), w, h)
             eyes = eyes_down(face["blendshapes"])
-            if base:
+            if getattr(self, "scoring_mode", None) == "recording":
+                if not base or "pitch" not in base:
+                    self.recording_face_samples.append((pitch, eyes))
+                    if len(self.recording_face_samples) >= 8:
+                        self.calib.baseline = self.calib.baseline or {}
+                        self.calib.baseline["pitch"] = statistics.median(p for p, _ in self.recording_face_samples)
+                        self.calib.baseline["eyes"] = statistics.median(e for _, e in self.recording_face_samples)
+                        base = self.calib.baseline
+            if base and "pitch" in base:
                 down, eyes_off = pitch - base["pitch"], eyes - base["eyes"]
                 down_bad = down > self.limits["look_down"] or eyes_off > EYES_DOWN_MAX
                 lines.append(line(f"eye level: head {down:+.0f} deg down, eyes down {eyes_off:+.2f}  (vs calibrated)",
@@ -555,14 +569,24 @@ class WebcamAnalyzer:
         # alerts are suppressed while calibrating so getting into position doesn't trigger them
         alerts = []
         if self.scoring and (self.scoring_started_at is None or now >= self.scoring_started_at):
-            conditions = {
-                "face": not face,
-                "tilt": tilt_bad if base and pose else None,
-                "look_down": down_bad if base and face else None,
-                "still": still if pose and both_recent else None,
-                "repeat": repeating if pose and both_recent else None,
-                "fast": fast if any(wrists) else None,
-            }
+            if getattr(self, "scoring_mode", None) == "recording":
+                # For recordings: evaluate hand motion relative to shoulders, and eye level when eyes are visible
+                # If eyes/face are not visible, look_down is None (no deductions)
+                conditions = {
+                    "look_down": down_bad if face and base and "pitch" in base else None,
+                    "still": still if any(wrists) else None,
+                    "repeat": repeating if any(wrists) else None,
+                    "fast": fast if any(wrists) else None,
+                }
+            else:
+                conditions = {
+                    "face": not face,
+                    "tilt": tilt_bad if base and pose else None,
+                    "look_down": down_bad if base and face else None,
+                    "still": still if pose and both_recent else None,
+                    "repeat": repeating if pose and both_recent else None,
+                    "fast": fast if any(wrists) else None,
+                }
             self._score_frame(now, dict.fromkeys(conditions) if calibrating else conditions)
         if not self.calib.busy:
             checks = ((self.face_alert, not face), (self.tilt_alert, tilt_bad), (self.down_alert, down_bad),

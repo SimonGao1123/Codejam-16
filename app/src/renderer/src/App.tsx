@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import LiveAlerts from './liveAlert/LiveAlerts'
 import Practice from './practice/Practice'
+import UploadGrade from './upload/UploadGrade'
 import './practice/practice.css'
 
 function App(): React.JSX.Element {
-  const [page, setPage] = useState<'practice' | 'alerts'>('practice')
+  const [page, setPage] = useState<'practice' | 'upload' | 'alerts'>('practice')
 
   return (
     <div className="ph-app">
@@ -21,6 +22,12 @@ function App(): React.JSX.Element {
             Practice
           </button>
           <button
+            aria-current={page === 'upload' ? 'page' : undefined}
+            onClick={() => setPage('upload')}
+          >
+            Upload & Grade
+          </button>
+          <button
             aria-current={page === 'alerts' ? 'page' : undefined}
             onClick={() => setPage('alerts')}
           >
@@ -31,6 +38,7 @@ function App(): React.JSX.Element {
       <div hidden={page !== 'practice'}>
         <Practice />
       </div>
+      <div hidden={page !== 'upload'}>{page === 'upload' && <UploadGrade />}</div>
       <div hidden={page !== 'alerts'}>{page === 'alerts' && <LiveAlerts />}</div>
     </div>
   )

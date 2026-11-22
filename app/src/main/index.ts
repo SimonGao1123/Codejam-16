@@ -4,13 +4,16 @@ import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { startAnalysisService } from './analysisService'
-import { registerWebcamRecorderIpc } from './webcamRecorder'
+import { registerUploadedMediaIpc, registerWebcamRecorderIpc } from './webcamRecorder'
 
 // The built UI is served from app://renderer/ instead of file://, because MediaPipe loads its
 // models and WebAssembly with fetch(), which Chromium doesn't allow for file:// URLs.
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
-  { scheme: 'practice-recording', privileges: { standard: true, secure: true, stream: true } }
+  { scheme: 'practice-recording', privileges: { standard: true, secure: true, stream: true } },
+  // Uploaded files use the same range-request playback path as practice recordings. Blob URLs are
+  // renderer-owned and can become unreliable when the analysis preview is replaced by the player.
+  { scheme: 'uploaded-media', privileges: { standard: true, secure: true, stream: true } }
 ])
 
 function serveRenderer(): void {
@@ -65,6 +68,7 @@ app.whenReady().then(async () => {
   })
 
   registerWebcamRecorderIpc()
+  registerUploadedMediaIpc()
   serveRenderer()
   // the Python analysis service starts loading its models while the window opens
   const servicePort = await startAnalysisService()

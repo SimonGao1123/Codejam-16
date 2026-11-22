@@ -45,10 +45,9 @@ class MicChunker extends AudioWorkletProcessor {
   private push(sample: number, endTime: number): void {
     this.buffer[this.filled++] = sample
     if (this.filled === CHUNK) {
-      this.port.postMessage(
-        { samples: this.buffer, startTime: endTime - CHUNK / TARGET_RATE },
-        [this.buffer.buffer]
-      )
+      this.port.postMessage({ samples: this.buffer, startTime: endTime - CHUNK / TARGET_RATE }, [
+        this.buffer.buffer
+      ])
       this.buffer = new Float32Array(CHUNK)
       this.filled = 0
     }
