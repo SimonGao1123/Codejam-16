@@ -177,9 +177,11 @@ class AudioAnalyzer:
             cutoff = min(cutoff, max(lo, quiet_limit - QUIET_SPEECH_HEADROOM_DB))
         self.voice.silence_dbfs = cutoff
 
-    def reset(self, voice_baseline=None):
-        """New practice session with the user's saved voice baseline."""
-        self.voice = VoiceMonitor(baseline=voice_baseline)
+    def reset(self, voice_baseline=None, recording_baseline=False):
+        """Start a live session from its saved calibration or an upload from its own audio."""
+        self.voice = VoiceMonitor(
+            baseline=voice_baseline, recording_baseline=recording_baseline
+        )
         self._configure_voice()                     # a new monitor keeps the Live alerts settings
         self._configure_silence()                   # and the room's measured silence level
         self.transcriber.reset()
@@ -478,6 +480,7 @@ class AudioAnalyzer:
             # reference pitch for the graph, and the pitch where a spike alert would fire
             "typical_hz": round(float(v.typical_pitch_hz), 1) if v.typical_pitch_hz else None,
             "typical_volume_dbfs": v.typical_volume_dbfs,
+            "baseline_source": v.baseline_source,
             "quiet_limit_dbfs": v.quiet_limit_dbfs,
             "spike_hz": (round(float(v.typical_pitch_hz) * 2 ** (v.pitch_jump_semitones / 12), 1)
                          if v.typical_pitch_hz else None),

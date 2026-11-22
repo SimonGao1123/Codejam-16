@@ -120,7 +120,17 @@ async def audio_connection(ws, session):
                 started_monotonic = time.monotonic()
                 session.scoring_client = ws
                 session.webcam.start_scoring(started_at)
-                await run(session.audio.reset, parse_voice_baseline(msg.get("voice_baseline")))
+                await run(
+                    session.audio.reset,
+                    parse_voice_baseline(msg.get("voice_baseline")),
+                    bool(msg.get("recording_baseline")),
+                )
+            elif msg["type"] == "audio_sync":
+                # Uploads send this directly after a binary audio chunk and wait for the reply.
+                # WebSocket ordering means its preceding chunk has gone through AudioAnalyzer.feed
+                # before this acknowledgement is returned. This prevents a fast upload from
+                # outrunning Moonshine's streaming transcription pipeline.
+                await ws.send(json.dumps({"type": "audio_processed", "id": msg.get("id")}))
             elif msg["type"] == "session_end" and session.scoring_client is ws:
                 session.scoring_client = None
                 session.webcam.scoring = False
@@ -197,8 +207,11 @@ async def audio_connection(ws, session):
                     
             elif msg["type"] == "noise_floor":
                 await run(session.audio.set_noise_floor, msg.get("dbfs"))
-                log.info("room noise %.1f dBFS: not speaking below %.1f dBFS", msg["dbfs"],
-                         session.audio.voice.silence_dbfs)
+                if msg.get("dbfs") is None:
+                    log.info("room noise measurement cleared")
+                else:
+                    log.info("room noise %.1f dBFS: not speaking below %.1f dBFS", msg["dbfs"],
+                             session.audio.voice.silence_dbfs)
             elif msg["type"] == "script":
                 await ws.send(json.dumps(await run(session.audio.set_script, msg.get("text"))))
                 await ws.send(json.dumps(await run(session.audio.pace_target_message)))   # word count changed

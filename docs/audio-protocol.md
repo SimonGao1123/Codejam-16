@@ -25,6 +25,16 @@ own rate in an audio worklet. Clients that omit `started_at` send raw samples wi
 {"type": "session_end"}      // finish the sentence still being spoken and return the session score
 ```
 
+Uploaded recordings use `"voice_baseline": null, "recording_baseline": true`. The service uses
+the first 1.5 seconds of voiced audio to establish a recording-local pitch and volume reference;
+the rest of the recording is graded for sustained changes relative to that reference. This makes
+the result independent of the file's overall gain and the user's live microphone calibration.
+
+Upload processing sends `{"type": "audio_sync", "id": 12}` immediately after each binary
+chunk and waits for `{"type": "audio_processed", "id": 12}`. The reply is sent only after
+the preceding ordered chunk has been processed, providing backpressure so an uploaded recording
+cannot outrun the streaming transcription model.
+
 ```json
 {"type": "noise_floor", "dbfs": -59.9}   // room noise, sent just before session_start
 ```

@@ -11,7 +11,13 @@ import './practice/practice.css'
 const emptyLibrary: PracticeLibrary = { folders: [], attempts: [] }
 
 function App(): React.JSX.Element {
+<<<<<<< Updated upstream
   const [page, setPage] = useState<'menu' | 'practice' | 'upload' | 'alerts' | 'calibration'>('menu')
+=======
+  const [page, setPage] = useState<'menu' | 'practice' | 'upload' | 'alerts' | 'calibration'>(
+    'menu'
+  )
+>>>>>>> Stashed changes
   const [voiceBaseline, setVoiceBaseline] = useState(loadVoiceCalibration)
   const [practice, setPractice] = useState<{ key: number; folderId: string | null } | null>(null)
   const [practiceBusy, setPracticeBusy] = useState(false)
