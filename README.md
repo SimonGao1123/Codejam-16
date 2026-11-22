@@ -19,6 +19,8 @@ computer: no cloud, no account.
 - **Live alerts:** turn each alert on/off and tune its threshold, timing and style (banner,
   compact, silent) on the Live alerts tab
 - **Results:** a delivery score with feedback, plus a recording to play back with alert markers
+- **Upload & grade:** analyze a saved video or audio recording with the same delivery scoring
+   checks as live practice; video also gets posture and hand tracking
 
 ## Setup
 
@@ -80,6 +82,18 @@ It makes the service slower to start (several seconds to load).
    progress update live.
 4. **End practice** to see your score, feedback and the playback.
 5. **Live alerts tab:** choose which alerts to show, how sensitive they are, and their style.
+
+### Grade a recording
+
+1. Open **Upload** and choose or drag in a presentation recording. Video files (MP4, WebM, MOV)
+   are analyzed for voice, transcript, posture, eye level and hand movement. Audio files (WAV,
+   MP3, M4A) are analyzed for voice and transcript, without body-language checks.
+2. Optionally paste your script or attach a text-based PDF to enable script comparison. Enter a
+   target duration to set a speaking pace; otherwise, the pace target comes from the Live alerts
+   settings.
+3. Start grading. The recording is analyzed locally, and the results show the same delivery score
+   breakdown and feedback used for live practice. Which checks contribute to the score depends on
+   what the recording contains and which checks are enabled in Live alerts.
 
 ## Project layout
 
