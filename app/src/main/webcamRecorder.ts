@@ -4,7 +4,7 @@
 import { app, ipcMain, protocol } from 'electron'
 import { randomUUID } from 'crypto'
 import { createReadStream, createWriteStream, type WriteStream } from 'fs'
-import { mkdir, readdir, stat } from 'fs/promises'
+import { mkdir, readdir, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { Readable } from 'stream'
 
@@ -17,6 +17,13 @@ interface Recording {
 let current: Recording | null = null
 const recordingName = /^[a-f0-9-]{36}\.webm$/
 const playbackUrl = (name: string): string => `practice-recording://media/${name}`
+const closingVideos = new Set<string>()
+
+function recordingsDirectory(): string {
+  return app.isPackaged
+    ? join(app.getPath('userData'), 'temp', 'recordings')
+    : join(app.getAppPath(), 'temp', 'recordings')
+}
 
 export interface SavedRecording {
   id: string
@@ -26,6 +33,24 @@ export interface SavedRecording {
 
 function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
+}
+
+export async function deleteSavedRecording(id: string): Promise<void> {
+  if (!recordingName.test(id)) throw new Error('Invalid recording ID.')
+  const dir = recordingsDirectory()
+  const video = join(dir, id)
+  if (video === current?.paths.video || closingVideos.has(video)) {
+    throw new Error('The recording is still being saved.')
+  }
+
+  // Keep the video available for another delete attempt if removing the event log fails.
+  for (const path of [join(dir, id.replace(/\.webm$/, '.jsonl')), video]) {
+    try {
+      await unlink(path)
+    } catch (error) {
+      if (!isMissing(error)) throw error
+    }
+  }
 }
 
 const close = (s: WriteStream): Promise<void> =>
@@ -63,10 +88,7 @@ async function serveRecording(path: string, request: Request): Promise<Response>
 }
 
 export function registerWebcamRecorderIpc(): void {
-  const dir = app.isPackaged
-    ? join(app.getPath('userData'), 'temp', 'recordings')
-    : join(app.getAppPath(), 'temp', 'recordings')
-  const closingVideos = new Set<string>()
+  const dir = recordingsDirectory()
 
   protocol.handle('practice-recording', (request) => {
     const url = new URL(request.url)

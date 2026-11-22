@@ -2,6 +2,7 @@ import { app, ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
 import { readFile, rename, writeFile } from 'fs/promises'
 import { join } from 'path'
+import { deleteSavedRecording } from './webcamRecorder'
 
 export interface PracticeFolder {
   id: string
@@ -34,10 +35,10 @@ export function registerPracticeLibraryIpc(): void {
     }
   }
 
-  function update(change: (library: PracticeLibrary) => void): Promise<PracticeLibrary> {
+  function update(change: (library: PracticeLibrary) => void | Promise<void>): Promise<PracticeLibrary> {
     const result = pendingWrite.then(async () => {
       const library = await read()
-      change(library)
+      await change(library)
       await writeFile(tempPath, JSON.stringify(library), 'utf8')
       await rename(tempPath, path)
       return library
@@ -56,6 +57,13 @@ export function registerPracticeLibraryIpc(): void {
   }
 
   ipcMain.handle('practice-library:list', () => pendingWrite.then(read))
+  ipcMain.handle('practice-library:delete-attempt', (_, id: string) => {
+    if (typeof id !== 'string') throw new Error('Invalid practice attempt ID.')
+    return update(async (library) => {
+      if (id.endsWith('.webm')) await deleteSavedRecording(id)
+      library.attempts = library.attempts.filter((attempt) => attempt.id !== id)
+    })
+  })
   ipcMain.handle('practice-library:create-folder', (_, name: string) =>
     update((library) => {
       const trimmed = name.trim()

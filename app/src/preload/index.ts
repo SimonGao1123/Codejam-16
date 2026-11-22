@@ -11,6 +11,8 @@ const api = {
   servicePort: Number(portArg?.split('=')[1]) || 8766,
   practiceLibrary: {
     list: (): Promise<PracticeLibrary> => ipcRenderer.invoke('practice-library:list'),
+    deleteAttempt: (id: string): Promise<PracticeLibrary> =>
+      ipcRenderer.invoke('practice-library:delete-attempt', id),
     createFolder: (name: string): Promise<PracticeLibrary> =>
       ipcRenderer.invoke('practice-library:create-folder', name),
     saveAttempt: (attempt: PracticeAttempt): Promise<PracticeLibrary> =>

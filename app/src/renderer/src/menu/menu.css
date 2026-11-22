@@ -47,8 +47,17 @@
   font: inherit;
 }
 
-.ph-menu-move {
+.ph-menu-attempt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
   padding: 0 16px 16px;
+}
+
+.ph-app .ph-menu-delete {
+  border-color: #a8687a;
+  color: #ffc8d3;
 }
 
 .ph-progress-chart {

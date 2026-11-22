@@ -33,12 +33,19 @@ export default function MainMenu({
   const [listError, setListError] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [playbackError, setPlaybackError] = useState(false)
+  const [deletedIds, setDeletedIds] = useState<string[]>([])
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteErrorId, setDeleteErrorId] = useState<string | null>(null)
   const [folderName, setFolderName] = useState('')
   const [changingLibrary, setChangingLibrary] = useState(false)
   const [folderError, setFolderError] = useState('')
-  const recordingsById = new Map(recordings?.map((recording) => [recording.id, recording]))
+  const recordingsById = new Map(
+    recordings
+      ?.filter(({ id }) => !deletedIds.includes(id))
+      .map((recording) => [recording.id, recording])
+  )
   const savedAttempts = new Map(library.attempts.map((attempt) => [attempt.id, attempt]))
-  for (const recording of recordings ?? []) {
+  for (const recording of recordingsById.values()) {
     if (!savedAttempts.has(recording.id)) {
       savedAttempts.set(recording.id, {
         id: recording.id,
@@ -110,6 +117,33 @@ export default function MainMenu({
       console.error(error)
       setFolderError('Couldn’t move this attempt.')
     } finally {
+      setChangingLibrary(false)
+    }
+  }
+
+  async function deleteAttempt(attempt: PracticeAttempt): Promise<void> {
+    if (practiceBusy || changingLibrary) return
+    const date = recordingDate.format(attempt.completedAt)
+    if (
+      !window.confirm(
+        `Permanently delete the practice session from ${date}, including its recording and score?`
+      )
+    ) {
+      return
+    }
+
+    setChangingLibrary(true)
+    setDeletingId(attempt.id)
+    setDeleteErrorId(null)
+    try {
+      onLibraryChange(await window.api.practiceLibrary.deleteAttempt(attempt.id))
+      setDeletedIds((ids) => [...ids, attempt.id])
+      setSelectedId((id) => (id === attempt.id ? null : id))
+    } catch (error) {
+      console.error(error)
+      setDeleteErrorId(attempt.id)
+    } finally {
+      setDeletingId(null)
       setChangingLibrary(false)
     }
   }
@@ -203,7 +237,9 @@ export default function MainMenu({
             <div className="ph-card-head">
               <h2 id="ph-preview-heading">{recordingDate.format(selected.completedAt)}</h2>
             </div>
-            {selectedRecording ? (
+            {deletingId === selected.id ? (
+              <p role="status">Deleting session…</p>
+            ) : selectedRecording ? (
               <video
                 key={selected.id}
                 src={selectedRecording.playbackUrl}
@@ -216,8 +252,8 @@ export default function MainMenu({
               <p>No recording is available for this attempt.</p>
             )}
             {playbackError && <p role="status">Couldn’t play this recording.</p>}
-            {library.folders.length > 0 && (
-              <div className="ph-menu-move">
+            <div className="ph-menu-attempt-actions">
+              {library.folders.length > 0 && (
                 <FolderSelect
                   folders={library.folders}
                   label="Move to folder"
@@ -225,7 +261,18 @@ export default function MainMenu({
                   onChange={(id) => void moveAttempt(selected, id)}
                   disabled={changingLibrary}
                 />
-              </div>
+              )}
+              <button
+                className="ph-script-button ph-menu-delete"
+                type="button"
+                disabled={practiceBusy || changingLibrary}
+                onClick={() => void deleteAttempt(selected)}
+              >
+                Delete session
+              </button>
+            </div>
+            {deleteErrorId === selected.id && (
+              <p role="status">Couldn’t delete this session. Try again.</p>
             )}
           </section>
         )}
