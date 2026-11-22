@@ -20,7 +20,7 @@ function calibrationText(cal: WebcamStatus['calibration'], sessionOn: boolean): 
   if (!sessionOn) return 'Calibrates when you start'
   if (cal?.phase === 'arming') return cal.message // e.g. "Waiting to calibrate: show both hands"
   if (cal?.phase === 'recording' || cal?.phase === 'waiting')
-    return `Calibrating: stand still · ${cal.remaining.toFixed(1)}s`
+    return `Calibrating: stand still · ${(Math.max(1, Math.ceil(cal.remaining * 10)) / 10).toFixed(1)}s`
   if (cal?.calibrated) return 'Calibrated'
   return cal ? 'Not calibrated: face and shoulders not in frame' : 'Calibrating soon…'
 }
@@ -31,28 +31,39 @@ export default function WebcamControls({
   cameraStream,
   onCalibrated
 }: Props): React.JSX.Element {
-  const cal = status.calibration
+  const cal = cameraStream && status.calibration?.request_id === cameraStream.id
+    ? status.calibration
+    : null
   const busy = cal?.phase === 'arming' || cal?.phase === 'waiting' || cal?.phase === 'recording'
 
-  // start of each session: calibrate as soon as frames are being analysed and Python is connected
-  const calibratedStream = useRef<MediaStream | null>(null)
-  const sawCalibrating = useRef(false)
+  const requestedStream = useRef<MediaStream | null>(null)
+  const completedStream = useRef<MediaStream | null>(null)
   useEffect(() => {
-    if (!cameraStream || !status.ready || !status.connected) return
-    if (calibratedStream.current === cameraStream) return
-    calibratedStream.current = cameraStream
-    sawCalibrating.current = false
-    webcam.current?.send({ type: 'calibrate', t: performance.now() / 1000, ...SESSION_CALIBRATION })
-  }, [cameraStream, status.ready, status.connected, webcam])
-
-  // done = this session's calibration was seen running and has since finished (not a leftover
-  // "calibrated" state from the previous session)
-  const calibrated = Boolean(cal?.calibrated)
-  useEffect(() => {
-    if (!cameraStream || calibratedStream.current !== cameraStream) return onCalibrated(false)
-    if (busy) sawCalibrating.current = true
-    onCalibrated(sawCalibrating.current && !busy && calibrated)
-  }, [cameraStream, busy, calibrated, onCalibrated])
+    if (!cameraStream) {
+      requestedStream.current = completedStream.current = null
+      onCalibrated(false)
+      return
+    }
+    if (completedStream.current === cameraStream) return
+    if (cal?.phase === 'idle' && cal.calibrated) {
+      completedStream.current = cameraStream
+      onCalibrated(true)
+      return
+    }
+    if (!status.connected) {
+      requestedStream.current = null
+      return
+    }
+    if (!status.ready || requestedStream.current === cameraStream) return
+    if (webcam.current?.send({
+      type: 'calibrate',
+      t: performance.now() / 1000,
+      request_id: cameraStream.id,
+      ...SESSION_CALIBRATION
+    })) {
+      requestedStream.current = cameraStream
+    }
+  }, [cal, cameraStream, onCalibrated, status.connected, status.ready, webcam])
 
   return (
     <div className="ph-webcam-bar">

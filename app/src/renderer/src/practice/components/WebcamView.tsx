@@ -20,7 +20,7 @@ export interface WebcamStatus {
 
 export interface WebcamHandle {
   /** Sends a message to Python and to the logger (the webcam recording), if set. */
-  send(msg: ClientMessage): void
+  send(msg: ClientMessage): boolean
   setLogger(log: ((msg: ClientMessage) => void) | null): void
 }
 
@@ -74,8 +74,9 @@ export default function WebcamView({
     ref,
     () => ({
       send: (msg) => {
-        clientRef.current?.send(msg)
-        loggerRef.current?.(msg)
+        const sent = clientRef.current?.send(msg) ?? false
+        if (sent) loggerRef.current?.(msg)
+        return sent
       },
       setLogger: (log) => {
         loggerRef.current = log

@@ -307,10 +307,10 @@ class Calibration:
         """Feed this frame's measurements (None = not seen). Returns True when recording just finished."""
         if not self.recording or self.waiting(now):
             return False
-        for k, v in values.items():
-            if v is not None and (self.include_hands or k not in self.OPTIONAL):
-                self.samples[k].append(v)
         if now < self.until:
+            for k, v in values.items():
+                if v is not None and (self.include_hands or k not in self.OPTIONAL):
+                    self.samples[k].append(v)
             return False
         self.until = None
         missing = [k for k in self.KEYS if not self.samples[k]]
@@ -359,6 +359,7 @@ class WebcamAnalyzer:
         self.fast_alert = Alert("Slow your hands", hold_s=0.4)
         self.repeat_alert = Alert("Vary your gestures", hold_s=1.0)
         self.calib = Calibration()
+        self.calibration_request_id = None
         self.motion = HandMotion()
         self.both_seen_at = -math.inf       # last time both hands were detected
         self.last_t = 0.0
@@ -427,13 +428,16 @@ class WebcamAnalyzer:
                 # the repeat slider is a percentage; the score is 0-1
                 self.limits[rule_id] = s["threshold"] / 100 if rule_id == "repeat" else float(s["threshold"])
 
-    def calibrate(self, t=None, delay=None, duration=None, when_ready=False):
+    def calibrate(self, t=None, delay=None, duration=None, when_ready=False, request_id=None):
         """Start calibration. Timed by the frames that follow; `t` defaults to the last frame's time.
         delay / duration: get-into-position pause and recording length (None = the defaults).
         when_ready: wait until the speaker is in frame and still. Hands are required only when
         the hands visibility setting is on at the start of calibration."""
+        if request_id is not None and self.calibration_request_id == request_id:
+            return
         if self.calib.busy and not when_ready:
             return
+        self.calibration_request_id = request_id
         self.calib.include_hands = self.missing_alert.enabled
         duration = CALIBRATE_S if duration is None else duration
         if when_ready:
@@ -597,14 +601,24 @@ class WebcamAnalyzer:
 
         lines.extend(extra_lines)
 
-        if self.calib.busy:
-            self._update_calibration(
-                now, self._readiness(now, pose, face_visible, shoulders_visible, both_recent, w, h)
-            )
-        if self.calib.add(now, tilt=tilt if shoulders_visible else None, pitch=pitch, eyes=eyes,
-                          rest_l=wrists[0], rest_r=wrists[1]) and self.calib.baseline:
-            for a in (self.tilt_alert, self.down_alert, self.still_alert):
-                a.reset()
+        c = self.calib
+        if c.recording and now >= c.until:
+            # Commit the completed window before considering readiness on the next frame.
+            duration = c.until - c.begins
+            c.add(now)
+            if c.baseline:
+                for alert in (self.tilt_alert, self.down_alert, self.still_alert):
+                    alert.reset()
+            elif self.ready_since is not None:
+                c.arm(duration, "Calibration restarted: get in frame and hold still")
+                self.ready_since = self.not_ready_since = None
+                self.restarted = True
+        elif c.busy:
+            missing = self._readiness(now, pose, face_visible, shoulders_visible, both_recent, w, h)
+            self._update_calibration(now, missing)
+            if not missing or self.ready_since is None:
+                c.add(now, tilt=tilt if shoulders_visible else None, pitch=pitch, eyes=eyes,
+                      rest_l=wrists[0], rest_r=wrists[1])
 
         # alerts are suppressed while calibrating so getting into position doesn't trigger them
         alerts = []
@@ -631,4 +645,4 @@ class WebcamAnalyzer:
 
         return {"type": "state", "t": now, "lines": lines, "alerts": alerts,
                 "rest_circles": rest_circles, "hand_labels": hand_labels,
-                "calibration": self.calib.state(now)}
+                "calibration": {**self.calib.state(now), "request_id": self.calibration_request_id}}
