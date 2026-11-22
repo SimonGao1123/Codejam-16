@@ -145,6 +145,21 @@ def test_session_start_calibration_is_immediate_and_3s():
     assert done["phase"] == "idle" and done["calibrated"]
 
 
+def test_uploaded_recording_uses_its_own_opening_baseline_and_scores_framing():
+    a = WebcamAnalyzer()
+    # A stale live-session calibration must never influence an uploaded video.
+    a.calib.baseline = {"tilt": 20, "pitch": 20, "eyes": 0.9, "rest_l": None, "rest_r": None}
+    a.start_scoring(0, mode="recording")
+    states = run_states(a, 0, 3.2)
+    assert states[-1][1]["calibrated"]
+    assert abs(a.calib.baseline["tilt"]) < 0.1
+
+    # After calibration, an absent face and hands are body-language incidents, not omitted data.
+    run_states(a, 3.2, 4, face=False, hands=0)
+    assert a.incidents["face"] >= 1
+    assert a.incidents["hands_missing"] >= 1
+
+
 def test_manual_calibration_keeps_the_countdown():
     a = WebcamAnalyzer()
     a.process(frame(0.0))

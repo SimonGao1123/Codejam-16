@@ -250,11 +250,16 @@ export default function UploadGrade(): React.JSX.Element {
       }
 
       // 3. Set up session control messages
+      let markSessionStarted: (() => void) | null = null
+      const sessionStarted = new Promise<void>((resolve) => {
+        markSessionStarted = resolve
+      })
       const scorePromise = new Promise<SessionScoreMessage>((resolve, reject) => {
         if (!audioWs) return reject(new Error('No audio socket'))
         audioWs.onmessage = (event): void => {
           try {
             const msg = JSON.parse(event.data)
+            if (msg.type === 'session_started') markSessionStarted?.()
             if (msg.type === 'session_score') {
               resolve(msg)
             }
@@ -273,6 +278,12 @@ export default function UploadGrade(): React.JSX.Element {
       )
       audioWs.send(JSON.stringify({ type: 'noise_floor', dbfs: -60.0 }))
       audioWs.send(JSON.stringify({ type: 'session_start', started_at: 0.0, mode: 'recording' }))
+      await Promise.race([
+        sessionStarted,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Timed out starting body-language analysis')), 5000)
+        )
+      ])
 
       // 4. Stream audio and video frames in stepped slices
       const duration = Math.max(
@@ -286,7 +297,7 @@ export default function UploadGrade(): React.JSX.Element {
       const totalSteps = Math.ceil(duration / stepSeconds)
 
       const seekVideo = (videoEl: HTMLVideoElement, targetTime: number): Promise<void> =>
-        new Promise((resolve) => {
+        new Promise((resolve, reject) => {
           if (Math.abs(videoEl.currentTime - targetTime) < 0.04) {
             resolve()
             return
@@ -297,10 +308,22 @@ export default function UploadGrade(): React.JSX.Element {
               resolved = true
               videoEl.removeEventListener('seeked', done)
               clearTimeout(timer)
-              resolve()
+              if (Math.abs(videoEl.currentTime - targetTime) < 0.04) resolve()
+              else
+                reject(
+                  new Error(`Could not seek to ${formatTime(targetTime)} in the uploaded video.`)
+                )
             }
           }
-          const timer = setTimeout(done, 150)
+          const timer = setTimeout(() => {
+            if (!resolved) {
+              resolved = true
+              videoEl.removeEventListener('seeked', done)
+              reject(
+                new Error(`Timed out seeking to ${formatTime(targetTime)} in the uploaded video.`)
+              )
+            }
+          }, 5000)
           videoEl.addEventListener('seeked', done)
           videoEl.currentTime = targetTime
         })
@@ -359,6 +382,29 @@ export default function UploadGrade(): React.JSX.Element {
       }
 
       // 5. Finalize Session
+      const webcamSocket = webcamWs
+      if (webcamSocket?.readyState === WebSocket.OPEN) {
+        setStatusText('Finishing body-language analysis...')
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            webcamSocket.removeEventListener('message', onMessage)
+            reject(new Error('Timed out finishing body-language analysis'))
+          }, 30000)
+          const onMessage = (event: MessageEvent): void => {
+            try {
+              if (JSON.parse(event.data).type !== 'flushed') return
+              clearTimeout(timer)
+              webcamSocket.removeEventListener('message', onMessage)
+              resolve()
+            } catch {
+              // Overlay messages are expected before the flush acknowledgement.
+            }
+          }
+          webcamSocket.addEventListener('message', onMessage)
+          webcamSocket.send(JSON.stringify({ type: 'flush' }))
+        })
+      }
+
       setStatusText('Computing score and grading delivery...')
       if (audioWs.readyState === WebSocket.OPEN) {
         audioWs.send(JSON.stringify({ type: 'session_end', duration_seconds: duration }))

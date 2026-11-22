@@ -37,6 +37,7 @@ VOICE_RULES = {
 BODY_RULES = {
     "look_down": (1.0, 5.0, 4, "Bring your eyes back to the calibrated camera position after checking notes."),
     "face": (0.5, 3.0, 1.5, "Stay in frame and face the camera while speaking."),
+    "hands_missing": (0.5, 3.0, 1.5, "Keep both hands visible so gestures can support your message."),
     "tilt": (0.5, 3.0, 2, "Keep your shoulders level with your calibrated posture."),
     "repeat": (1.0, 4.0, 1, "Vary your gestures and avoid repeating the same motion in quick succession."),
     "still": (0.5, 3.0, 1.5, "Use an occasional purposeful gesture to emphasize a point."),
@@ -220,7 +221,7 @@ def score_presentation(
     as MIN_SCORING_MINUTES. The result's scoring_minutes shows the length used.
 
     The complete rubric allocates 6 points for fillers, 3 for voice tone,
-    4 for speaking pace, 11 for body language, and 6 for script accuracy. The score
+    4 for speaking pace, 12.5 for body language, and 6 for script accuracy. The score
     is the share of the available points kept, scaled to 100. measured_points shows
     how much of the rubric was evaluated.
     With no measured data, score is None.

@@ -85,6 +85,10 @@ async def webcam_connection(ws, session):
                                      when_ready=bool(msg.get("when_ready")))
         elif msg["type"] == "settings":
             session.apply_settings(msg["rules"])
+        elif msg["type"] == "flush":
+            # WebSocket messages are processed in order. This acknowledgement means every frame
+            # sent before `flush` has updated the analyzer before the audio side scores it.
+            await ws.send(json.dumps({"type": "flushed"}))
     log.info("webcam client disconnected")
 
 
@@ -116,6 +120,7 @@ async def audio_connection(ws, session):
                 mode = msg.get("mode")
                 session.webcam.start_scoring(started_at, mode=mode)
                 await run(session.audio.reset)
+                await ws.send(json.dumps({"type": "session_started"}))
             elif msg["type"] == "session_end" and session.scoring_client is ws:
                 session.scoring_client = None
                 session.webcam.scoring = False
