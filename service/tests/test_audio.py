@@ -114,6 +114,27 @@ def test_pace_is_not_scored_without_enough_transcript_data():
     assert score_presentation(pace=None)["categories"]["speaking_pace"]["points"] is None
 
 
+def test_disabled_alerts_exclude_only_their_scoring_checks():
+    report = score_presentation(
+        filler_counts={"um": 8},
+        voice_incidents={"pitch": 4, "quiet": 0},
+        body_incidents={"look_down": 5, "tilt": 0},
+        pace={"average_wpm": 210, "segment_wpms": [100, 190, 240]},
+        script_match=0.1,
+        duration_seconds=60,
+        disabled_alerts={"filler", "pitch", "look_down", "pace", "out_of_order"},
+    )
+    checks = report["categories"]
+    assert checks["filler"]["points"] is None
+    assert set(checks["voice_tone"]["checks"]) == {"quiet"}
+    assert set(checks["body_language"]["checks"]) == {"tilt"}
+    assert set(checks["speaking_pace"]["checks"]) == {"moderate_pace"}
+    assert checks["script_accuracy"]["points"] is None
+    assert report["measured_points"] == 5
+    assert report["score"] == 60
+    assert [tip["rule"] for tip in report["feedback"]] == ["moderate_pace"]
+
+
 def test_current_wpm_uses_recent_timed_words(stt_model):
     analyzer = AudioAnalyzer(stt_model, AlertBoard())
     analyzer.transcriber.word_times = [(i * 0.5, i * 0.5 + 0.2) for i in range(20)]
@@ -167,6 +188,7 @@ def test_out_of_range_pace_posts_the_matching_live_alert(
 
 def test_session_score_has_recording_relative_checkpoints():
     session = Session(Mock())
+    session.apply_settings({"filler": {"enabled": False}})
     session.audio.set_embedder(lambda texts: np.ones((len(texts), 1), dtype=np.float32))
 
     class Client:
@@ -205,6 +227,7 @@ def test_session_score_has_recording_relative_checkpoints():
     assert transcript["fillers"]["you know"] == 1
     assert script_position["type"] == "script_position"
     assert report["type"] == "session_score"
+    assert report["categories"]["filler"]["points"] is None
     assert report["checkpoints"] == [
         {"at": 0.5, "category": "body_language", "label": "Face the camera"},
         {"at": 1.0, "category": "voice_tone", "label": "Speak up"},

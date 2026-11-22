@@ -175,6 +175,23 @@ def test_when_ready_waits_for_face_shoulders_and_hands():
     assert states[-1][1]["phase"] == "idle" and states[-1][1]["calibrated"]
 
 
+def test_when_ready_skips_hand_calibration_when_visibility_alert_is_disabled():
+    a = WebcamAnalyzer()
+    a.calibrate(0.0, delay=0, duration=3, when_ready=True)
+    assert "show both hands" in a.process(frame(0.0, hands=0))["calibration"]["message"]
+
+    # Restart after cancelling the session that was waiting for hands.
+    a.apply_settings(rules(hands_missing={"enabled": False}))
+    a.calibrate(1.0, delay=0, duration=3, when_ready=True)
+    states = run_states(a, 1.0, 1, hands=0, face=False)
+    assert "show your face" in states[-1][1]["message"]
+    assert "show both hands" not in states[-1][1]["message"]
+    states = run_states(a, 2.0, 5, hands=lambda t: 0 if t < 4 else 2)
+    assert states[-1][1]["calibrated"]
+    assert a.calib.baseline["rest_l"] is None and a.calib.baseline["rest_r"] is None
+    assert "resting hands" not in states[-1][1]["message"]
+
+
 def test_when_ready_waits_for_the_speaker_to_hold_still():
     a = WebcamAnalyzer()
     a.calibrate(0.0, delay=0, duration=3, when_ready=True)

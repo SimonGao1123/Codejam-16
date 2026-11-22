@@ -13,8 +13,7 @@ type Props = {
   onCalibrated: (done: boolean) => void // this session's calibration has finished
 }
 
-// every session starts by recording the resting position: as soon as the face, shoulders and both
-// hands are in frame and the speaker holds still, 3 s of recording (restarted if they move off)
+// Record 3 s once the speaker is in frame and still. The service decides whether hands are required.
 const SESSION_CALIBRATION = { delay: 0, duration: 3, when_ready: true }
 
 function calibrationText(cal: WebcamStatus['calibration'], sessionOn: boolean): string {
