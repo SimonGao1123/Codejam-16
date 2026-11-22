@@ -16,7 +16,7 @@ minute, then compared to two thresholds:
 So the same mistakes cost less in a long presentation than in a short one.
 """
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 
 # Presentations shorter than this are scored as if they were this long, so one
 # slip in a very short clip can't dominate the score.
@@ -35,12 +35,12 @@ VOICE_RULES = {
     "quiet": (1.0, 4.0, 1, "Project a little more during quiet passages."),
 }
 BODY_RULES = {
-    "look_down": (1.0, 5.0, 4, "Bring your eyes back to the calibrated camera position after checking notes."),
-    "face": (0.5, 3.0, 1.5, "Stay in frame and face the camera while speaking."),
-    "tilt": (0.5, 3.0, 2, "Keep your shoulders level with your calibrated posture."),
-    "repeat": (1.0, 4.0, 1, "Vary your gestures and avoid repeating the same motion in quick succession."),
-    "still": (0.5, 3.0, 1.5, "Use an occasional purposeful gesture to emphasize a point."),
-    "fast": (1.0, 4.0, 1, "Slow down quick hand movements so each gesture has a clear purpose."),
+    "look_down": (0.5, 3.0, 4, "Bring your eyes back to the calibrated camera position after checking notes."),
+    "face": (0.25, 2.0, 1.5, "Stay in frame and face the camera while speaking."),
+    "tilt": (0.25, 2.0, 2, "Keep your shoulders level with your calibrated posture."),
+    "repeat": (0.5, 2.5, 1, "Vary your gestures and avoid repeating the same motion in quick succession."),
+    "still": (0.25, 2.0, 1.5, "Use an occasional purposeful gesture to emphasize a point."),
+    "fast": (0.5, 2.5, 1, "Slow down quick hand movements so each gesture has a clear purpose."),
 }
 MAX_SCORE = FILLER_MAX_POINTS + sum(rule[2] for rule in (*VOICE_RULES.values(), *BODY_RULES.values()))
 PACE_MAX_POINTS = 4
@@ -58,6 +58,13 @@ SCRIPT_GOOD_MATCH = 0.85
 SCRIPT_BAD_MATCH = 0.5
 
 SCORE_OUT_OF = 100
+
+# Most checks share the live alert's ID. These checks use derived measurements.
+CHECK_ALERTS = {
+    "moderate_pace": ("pace_avg",),
+    "consistent_pace": ("pace",),
+    "script_match": ("off_script", "out_of_order", "stuck"),
+}
 
 
 def _count(value: int) -> int:
@@ -199,6 +206,7 @@ def score_presentation(
     expected_minutes: float | None = None,
     script_match: float | None = None,
     volume: Mapping[str, object] | None = None,
+    disabled_alerts: Collection[str] = (),
 ) -> dict:
     """Return a JSON-ready score out of 100, category breakdown, and ordered tips.
 
@@ -222,7 +230,7 @@ def score_presentation(
     The complete rubric allocates 6 points for fillers, 3 for voice tone,
     4 for speaking pace, 11 for body language, and 6 for script accuracy. The score
     is the share of the available points kept, scaled to 100. measured_points shows
-    how much of the rubric was evaluated.
+    how much of the rubric was evaluated. Checks tied to disabled alerts are excluded.
     With no measured data, score is None.
     """
     minutes = _minutes(duration_seconds)
@@ -256,6 +264,15 @@ def score_presentation(
         "body_language": _incident_category(body_incidents, BODY_RULES, scoring_minutes, length_known),
         "script_accuracy": _script_category(script_match),
     }
+    if disabled_alerts:
+        categories = {
+            name: _category({
+                check_id: check
+                for check_id, check in category["checks"].items()
+                if not any(alert in disabled_alerts for alert in CHECK_ALERTS.get(check_id, (check_id,)))
+            })
+            for name, category in categories.items()
+        }
     measured_points = sum(category["max_points"] for category in categories.values())
     deducted = sum(category["deduction"] for category in categories.values())
     feedback = [

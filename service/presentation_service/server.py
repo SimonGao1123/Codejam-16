@@ -120,6 +120,9 @@ async def audio_connection(ws, session):
                 session.webcam.scoring = False
                 body_incidents = session.webcam.incidents.copy()
                 body_checkpoints = session.webcam.checkpoints.copy()
+                disabled_alerts = {
+                    rule_id for rule_id in session.audio.settings if not session.audio.enabled(rule_id)
+                }
                 # length of the presentation, used by the scorer to scale deductions
                 duration_seconds = (
                     time.monotonic() - started_monotonic if started_monotonic is not None else None
@@ -138,7 +141,8 @@ async def audio_connection(ws, session):
                         expected_minutes=(session.audio.target_seconds / 60
                                           if session.audio.target_seconds else None),
                         volume=session.audio.volume_summary(),
-                        script_match=session.audio.script_match()
+                        script_match=session.audio.script_match(),
+                        disabled_alerts=disabled_alerts,
                     )
                     checkpoints = []
                     if started_at is not None:

@@ -20,7 +20,7 @@ export default function SessionResults({
         {result.score !== null && <strong>{result.score} / {result.max_score}</strong>}
       </div>
       {result.score === null ? (
-        <p>No audio or webcam data was available to score this session.</p>
+        <p>No score is available. Scoring requires an enabled check with enough practice data.</p>
       ) : (
         <>
           <dl className="ph-results-breakdown">

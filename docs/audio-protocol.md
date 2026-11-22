@@ -71,7 +71,10 @@ Contains `score` (out of `max_score`, currently 100, or null without measured da
 pace, body language, and script accuracy breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
 with a `category`, `label`, and `at` in seconds from recording start). Voice incidents come from the existing voice detector.
 Webcam incidents use the configured hold durations and count each sustained condition once.
-Hiding live banners does not turn off scoring.
+The individual Live alerts toggles at session end determine which checks count. A disabled check
+contributes neither deductions nor available points. **Average pace** controls the average pace
+check, and **Live pace** controls the consistency check. Script accuracy is a combined check and
+is excluded if any of the script alerts are disabled. The Silent display style only hides banners.
 
 Speaking pace is measured from final transcript word timings. Its four points are split equally
 between a moderate average pace and consistency across roughly 20-word samples. The default target
