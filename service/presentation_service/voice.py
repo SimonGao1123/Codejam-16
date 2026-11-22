@@ -149,7 +149,7 @@ class VoiceMonitor:
     PAUSE = "Keep talking"
 
     def __init__(self, quiet_drop_db=8.0, noise_floor_dbfs=DEFAULT_NOISE_FLOOR_DBFS,
-                 quiet_seconds=0.7, volume_jump_db=6.0, pitch_jump_semitones=6.0, pause_seconds=5.0,
+                 quiet_seconds=0.7, volume_jump_db=10.0, pitch_jump_semitones=6.0, pause_seconds=5.0,
                  baseline=None, recording_baseline=False):
         self.quiet_drop_db = quiet_drop_db
         self.noise_floor_dbfs = noise_floor_dbfs
@@ -174,7 +174,7 @@ class VoiceMonitor:
         self.silence_dbfs = None
         self.speaking = False
         self.quiet = AlertRule(quiet_seconds, grace_blocks=QUIET_GAP_BLOCKS)
-        self.volume_spike = AlertRule(0.3)
+        self.volume_spike = AlertRule(0.5)          # 10 dB above typical for 0.5 s (was 6 dB, 0.3 s)
         self.pitch_spike = AlertRule(0.3, grace_blocks=2)
         self.pitch_direction = 0
         self.stable_pitch_hz = None

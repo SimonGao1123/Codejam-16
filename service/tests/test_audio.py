@@ -56,7 +56,7 @@ def test_tone_gives_pitch_and_volume(stt_model):
 @pytest.mark.parametrize(("hz", "amp", "rule", "banner"), [
     (130, 0.2, "pitch", "Steady your pitch"),
     (300, 0.2, "pitch", "Steady your pitch"),
-    (200, 0.5, "volume", "Steady your volume"),
+    (200, 0.8, "volume", "Steady your volume"),          # 12 dB above the -17 dBFS reference
     (200, 0.06, "quiet", "Speak up"),
 ])
 def test_sustained_voice_violations_alert_and_lose_credit(hz, amp, rule, banner):
@@ -160,7 +160,7 @@ def test_voice_calibration_endpoint_measures_speech_and_rejects_silence():
 def test_pitch_and_volume_baseline_does_not_follow_sustained_voice_changes():
     a = AudioAnalyzer(Mock(), AlertBoard())
     a.reset((150, -17))
-    tone = 0.4 * np.sin(2 * np.pi * 250 * np.arange(SR * 12) / SR)
+    tone = 0.8 * np.sin(2 * np.pi * 250 * np.arange(SR * 12) / SR)      # -5 dBFS: 12 dB over -17
     readings = [msg for msg in feed_all(a, tone) if msg["type"] == "voice"]
     assert all(msg["typical_hz"] == 150 and msg["typical_volume_dbfs"] == -17 for msg in readings)
     assert readings[0]["spike_hz"] == pytest.approx(150 * 2 ** (6 / 12), abs=0.1)
@@ -170,6 +170,16 @@ def test_pitch_and_volume_baseline_does_not_follow_sustained_voice_changes():
     readings = [msg for msg in feed_all(a, tone[:SR]) if msg["type"] == "voice"]
     assert readings[0]["typical_hz"] == 250 and readings[0]["typical_volume_dbfs"] == -11
     assert a.voice_incidents["pitch"] == 0 and a.voice_incidents["volume"] == 0
+
+
+def test_a_modest_volume_rise_is_not_a_spike():
+    # 8 dB above the reference for over a second: under the 10 dB threshold, so no alert
+    board = AlertBoard()
+    a = AudioAnalyzer(Mock(), board)
+    a.reset((200, -17))
+    a.set_noise_floor(-65.0)
+    feed_all(a, 0.5 * np.sin(2 * np.pi * 200 * np.arange(int(SR * 1.5)) / SR))
+    assert a.voice_incidents.get("volume", 0) == 0 and "Steady your volume" not in board.active()
 
 
 def test_uncalibrated_voice_is_measured_without_pitch_or_volume_deductions():

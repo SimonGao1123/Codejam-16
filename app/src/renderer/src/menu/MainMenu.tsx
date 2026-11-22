@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PracticeAttempt, PracticeLibrary } from '../../../main/practiceLibrary'
 import type { SavedRecording } from '../../../main/webcamRecorder'
+import { max1, score1 } from '../practice/scoreFormat'
 import FolderSelect from './FolderSelect'
 import PracticeProgress from './PracticeProgress'
 import './menu.css'
@@ -296,7 +297,7 @@ export default function MainMenu({
                       </time>
                     </span>
                     <span>
-                      {score && `${score.points}/${score.maximum} · `}
+                      {score && `${score1(score.points)}/${max1(score.maximum)} · `}
                       {recordingsById.has(id) ? 'Watch' : 'View'}
                     </span>
                   </button>

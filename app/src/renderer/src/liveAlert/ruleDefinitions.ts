@@ -29,8 +29,8 @@ export const rules = [
     unit: 'dB above normal',
     min: 3,
     max: 18,
-    value: 6,
-    duration: 0.3,
+    value: 10,
+    duration: 0.5,
     cooldown: 3
   },
   {

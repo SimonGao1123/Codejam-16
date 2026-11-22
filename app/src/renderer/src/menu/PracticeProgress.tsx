@@ -1,4 +1,5 @@
 import type { PracticeAttempt } from '../../../main/practiceLibrary'
+import { max1, score1 } from '../practice/scoreFormat'
 
 const shortDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
 const fullDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
@@ -41,11 +42,11 @@ export default function PracticeProgress({
             {recent.map(({ id, score, completedAt, percent }) => (
               <li
                 key={id}
-                title={`${fullDate.format(completedAt)} · ${score.points}/${score.maximum} · ${score.measured} rubric points measured`}
+                title={`${fullDate.format(completedAt)} · ${score1(score.points)}/${max1(score.maximum)} · ${max1(score.measured)} rubric points measured`}
               >
                 <div className="ph-progress-track">
                   <div className="ph-progress-bar" style={{ height: `${percent}%` }}>
-                    <span>{Math.round(percent)}%</span>
+                    <span>{score1(percent)}%</span>
                   </div>
                 </div>
                 <time dateTime={new Date(completedAt).toISOString()}>

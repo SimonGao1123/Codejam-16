@@ -53,10 +53,14 @@ function readPreferences(): Preferences {
         const savedEntry = saved.rules?.[rule.id]
         // The first pace rule shipped with a hidden 15 s cooldown. It now has a
         // visible, responsive 5 s default, so migrate that old default once.
+        // Volume spikes were too sensitive at 6 dB for 0.3 s; move that old default to the new one
+        // (a value the user picked stays).
         const entry =
           rule.id === 'pace' && savedEntry?.cooldown === 15
             ? { ...savedEntry, cooldown: 5 }
-            : savedEntry
+            : rule.id === 'volume' && savedEntry?.threshold === 6 && savedEntry.duration === 0.3
+              ? { ...savedEntry, threshold: rule.value, duration: rule.duration }
+              : savedEntry
         if (
           entry &&
           typeof entry.enabled === 'boolean' &&

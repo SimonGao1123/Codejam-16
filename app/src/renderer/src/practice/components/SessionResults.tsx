@@ -1,4 +1,5 @@
 import type { SessionScoreMessage } from '../audio/audioProtocol'
+import { max1, score1 } from '../scoreFormat'
 
 const CATEGORY_LABELS = {
   filler: 'Filler words',
@@ -25,7 +26,7 @@ export default function SessionResults({
     <section className="ph-results" aria-labelledby="ph-results-heading" aria-live="polite">
       <div className="ph-card-head">
         <h2 id="ph-results-heading">Practice results</h2>
-        {result.score !== null && <strong>{result.score.toFixed(1)}%</strong>}
+        {result.score !== null && <strong>{score1(result.score)}%</strong>}
       </div>
       {result.score === null ? (
         <p>No score is available. Scoring requires an enabled check with enough practice data.</p>
@@ -41,11 +42,11 @@ export default function SessionResults({
                   <dd>
                     {breakdown.points === null
                       ? 'Not measured'
-                      : `${breakdown.points.toFixed(1)} / ${breakdown.max_points}`}
+                      : `${score1(breakdown.points)} / ${max1(breakdown.max_points)}`}
                     {breakdown.points !== null &&
                       breakdown.weight !== undefined &&
                       breakdown.max_points < breakdown.weight && (
-                        <small> · {breakdown.weight} with every check on</small>
+                        <small> · {max1(breakdown.weight)} with every check on</small>
                       )}
                     {pace?.average_wpm !== undefined && (
                       <small>
@@ -74,7 +75,7 @@ export default function SessionResults({
                   <div key={id}>
                     <dt>{label}</dt>
                     <dd>
-                      {check.max_points - check.deduction} / {check.max_points}
+                      {score1(check.max_points - check.deduction)} / {max1(check.max_points)}
                       <small> · {check.count} {check.count === 1 ? 'violation' : 'violations'}</small>
                     </dd>
                   </div>
@@ -84,7 +85,7 @@ export default function SessionResults({
           )}
           <p>
             {result.measured_points < 100
-              ? `Scored out of the ${result.measured_points} of 100 points that were measured; criteria that weren’t measured are left out.`
+              ? `Scored out of the ${max1(result.measured_points)} of 100 points that were measured; criteria that weren’t measured are left out.`
               : 'Scored out of all 100 points.'}
           </p>
           {result.feedback.length > 0 ? (
