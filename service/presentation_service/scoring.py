@@ -59,6 +59,16 @@ SCRIPT_MAX_POINTS = 6
 SCRIPT_GOOD_MATCH = 0.85
 SCRIPT_BAD_MATCH = 0.5
 
+# Script order: each "Skipped ahead" / "Went back" event costs a little, capped
+SCRIPT_ORDER_MAX_POINTS = 2
+SCRIPT_ORDER_LOSS_PER_EVENT = 0.5
+
+# Time limit (only when the user set one): no deduction up to TIME_GRACE over the limit, the full
+# TIME_MAX_POINTS at TIME_FULL_OVER or more over, linear in between. Finishing early is fine.
+TIME_MAX_POINTS = 3
+TIME_GRACE = 0.05
+TIME_FULL_OVER = 0.30
+
 SCORE_OUT_OF = 100
 
 # Most checks share the live alert's ID. These checks use derived measurements.
@@ -66,6 +76,7 @@ CHECK_ALERTS = {
     "moderate_pace": ("pace_avg",),
     "consistent_pace": ("pace",),
     "script_match": ("off_script", "out_of_order", "stuck"),
+    "script_order": ("out_of_order",),
 }
 
 
@@ -163,8 +174,36 @@ def _pace_category(pace: Mapping[str, object] | None, target_wpm: float) -> dict
     return _category(checks)
 
 
-def _script_category(script_match: float | None) -> dict:
-    """Score how closely the delivery followed the script (script_match is 0-1)."""
+def _clock(minutes: float) -> str:
+    seconds = round(minutes * 60)
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def _time_category(recorded_minutes: float | None, limit_minutes: float | None) -> dict:
+    """Going over the user's time limit (3 pts): none lost up to TIME_GRACE over, all at
+    TIME_FULL_OVER or more. Not measured without a limit or a recorded length."""
+    if not recorded_minutes or not isinstance(limit_minutes, (int, float)) or limit_minutes <= 0:
+        return _category({})
+    over = recorded_minutes / limit_minutes - 1
+    deduction = _rate_deduction(over, TIME_GRACE, TIME_FULL_OVER, TIME_MAX_POINTS)
+    return _category({
+        "over_time": {
+            "count": 0,
+            "recorded_minutes": round(recorded_minutes, 2),
+            "limit_minutes": round(float(limit_minutes), 2),
+            "over_percent": round(max(0.0, over) * 100, 1),
+            "max_points": TIME_MAX_POINTS,
+            "deduction": round(deduction, 3),
+            "feedback": (f"You went {max(0.0, over) * 100:.0f}% over your {_clock(limit_minutes)} "
+                         f"limit ({_clock(recorded_minutes)}). Trim content or pick up the pace.")
+                        if deduction > 0 else None,
+        }
+    })
+
+
+def _script_category(script_match: float | None, order_events: int | None = None) -> dict:
+    """Score how closely the delivery followed the script (script_match is 0-1, 6 pts) and how
+    often it skipped ahead or went back (order_events, 2 pts)."""
     if not isinstance(script_match, (int, float)) or isinstance(script_match, bool):
         return _category({})
     match = float(script_match)
@@ -174,7 +213,7 @@ def _script_category(script_match: float | None) -> dict:
     deduction = _rate_deduction(
         SCRIPT_GOOD_MATCH - match, 0.0, SCRIPT_GOOD_MATCH - SCRIPT_BAD_MATCH, SCRIPT_MAX_POINTS
     )
-    return _category({
+    checks = {
         "script_match": {
             "count": 0,
             "match": round(match, 3),
@@ -185,7 +224,18 @@ def _script_category(script_match: float | None) -> dict:
             "feedback": "Stay closer to your script; parts were skipped or reworded too much."
                         if deduction > 0 else None,
         }
-    })
+    }
+    if order_events is not None:
+        count = _count(order_events)
+        order_deduction = min(SCRIPT_ORDER_MAX_POINTS, count * SCRIPT_ORDER_LOSS_PER_EVENT)
+        checks["script_order"] = {
+            "count": count,
+            "max_points": SCRIPT_ORDER_MAX_POINTS,
+            "deduction": order_deduction,
+            "feedback": (f"Follow your script in order: you skipped ahead or went back "
+                         f"{count} time{'s' if count != 1 else ''}.") if count else None,
+        }
+    return _category(checks)
 
 
 def score_presentation(
@@ -198,6 +248,7 @@ def score_presentation(
     duration_seconds: float | None = None,
     expected_minutes: float | None = None,
     script_match: float | None = None,
+    script_order_events: int | None = None,
     volume: Mapping[str, object] | None = None,
     disabled_alerts: Collection[str] = (),
 ) -> dict:
@@ -209,7 +260,12 @@ def score_presentation(
 
     script_match is how closely the delivery followed the user's script, from
     0 to 1. Pass None when no script was provided; the script category is then
-    left out of the score entirely.
+    left out of the score entirely. script_order_events: how many times the speaker
+    skipped ahead or went back in the script (None = not measured).
+
+    Time limit: with expected_minutes (the user's time limit) and a recorded
+    duration_seconds, going more than TIME_GRACE over the limit costs up to
+    TIME_MAX_POINTS (category "time_limit").
 
     An empty filler mapping means transcription found no fillers. Pass None
     when no transcript was available. The transcript's "filler?" tally is
@@ -221,7 +277,8 @@ def score_presentation(
     as MIN_SCORING_MINUTES. The result's scoring_minutes shows the length used.
 
     The complete rubric allocates 6 points for fillers, 6 for voice tone,
-    4 for speaking pace, 10 for body language, and 6 for script accuracy. The score
+    4 for speaking pace, 10 for body language, 8 for script accuracy (6 coverage, 2 order)
+    and 3 for the time limit. The score
     is the share of the available points kept, scaled to 100. measured_points shows
     how much of the rubric was evaluated. Checks tied to disabled alerts are excluded.
     A second sustained framing failure can deduct another 2.5 measured body-language points.
@@ -265,7 +322,10 @@ def score_presentation(
         "voice_tone": _sustained_category(voice_incidents, VOICE_RULES),
         "speaking_pace": _pace_category(pace, pace_target_wpm),
         "body_language": _sustained_category(body_incidents, BODY_RULES),
-        "script_accuracy": _script_category(script_match),
+        "script_accuracy": _script_category(script_match, script_order_events),
+        "time_limit": _time_category(
+            minutes if duration_source == "recorded" else None, expected_minutes
+        ),
     }
     if disabled_alerts:
         categories = {

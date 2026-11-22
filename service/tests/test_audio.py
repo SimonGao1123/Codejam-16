@@ -663,3 +663,31 @@ def test_live_pace_alert_uses_the_desired_pace(stt_model):
     a.transcriber.word_times = [(i * 0.46, i * 0.46 + 0.1) for i in range(40)]
     a.check_pace()
     assert "Pick up the pace" in board.posted
+
+
+def test_going_over_the_time_limit_costs_points():
+    def time_check(recorded_s, limit_min):
+        report = score_presentation(duration_seconds=recorded_s, expected_minutes=limit_min)
+        return report["categories"]["time_limit"]
+
+    assert time_check(9 * 60, 10)["checks"]["over_time"]["deduction"] == 0        # early: fine
+    assert time_check(10.4 * 60, 10)["checks"]["over_time"]["deduction"] == 0     # 4% over: grace
+    mid = time_check(11.75 * 60, 10)["checks"]["over_time"]                        # 17.5% over
+    assert mid["deduction"] == pytest.approx(1.5) and "18% over your 10:00 limit (11:45)" in mid["feedback"]
+    assert time_check(14 * 60, 10)["checks"]["over_time"]["deduction"] == 3        # 40% over: all 3
+    assert time_check(14 * 60, None)["max_points"] == 0                            # no limit: not scored
+    # without a recorded length the limit is only the fallback length, never "over time"
+    assert score_presentation(expected_minutes=10)["categories"]["time_limit"]["max_points"] == 0
+
+
+def test_skipping_around_the_script_costs_a_little_per_event():
+    def order(events, disabled=()):
+        report = score_presentation(script_match=1.0, script_order_events=events, disabled_alerts=disabled)
+        return report["categories"]["script_accuracy"]["checks"].get("script_order")
+
+    assert order(0)["deduction"] == 0
+    assert order(1)["deduction"] == 0.5 and "1 time." in order(1)["feedback"]
+    assert order(9)["deduction"] == 2                                              # capped
+    assert order(3, disabled=("out_of_order",)) is None                           # alert off: not scored
+    # no script: no script category at all, whatever the count
+    assert score_presentation(script_order_events=3)["categories"]["script_accuracy"]["max_points"] == 0

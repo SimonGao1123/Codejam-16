@@ -5,10 +5,16 @@ const CATEGORY_LABELS = {
   voice_tone: 'Voice tone',
   speaking_pace: 'Speaking pace',
   body_language: 'Body language',
-  script_accuracy: 'Script accuracy'
+  script_accuracy: 'Script accuracy',
+  time_limit: 'Time limit'
 } as const
 
 const VOICE_LABELS = { pitch: 'Pitch swings', volume: 'Volume spikes', quiet: 'Low volume' }
+
+function clock(minutes: number): string {
+  const seconds = Math.round(minutes * 60)
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+}
 
 export default function SessionResults({
   result
@@ -32,6 +38,7 @@ export default function SessionResults({
           <dl className="ph-results-breakdown">
             {Object.entries(result.categories).map(([category, breakdown]) => {
               const pace = breakdown.checks.moderate_pace
+              const time = breakdown.checks.over_time
               return (
                 <div key={category}>
                   <dt>{CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS]}</dt>
@@ -43,6 +50,13 @@ export default function SessionResults({
                       <small>
                         {' '}
                         · {pace.average_wpm} WPM (target {pace.target_wpm} WPM)
+                      </small>
+                    )}
+                    {time?.recorded_minutes !== undefined && time.limit_minutes !== undefined && (
+                      <small>
+                        {' '}
+                        · {clock(time.recorded_minutes)} of {clock(time.limit_minutes)}
+                        {time.over_percent ? `, ${Math.round(time.over_percent)}% over` : ''}
                       </small>
                     )}
                   </dd>

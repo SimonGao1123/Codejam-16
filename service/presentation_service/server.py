@@ -173,6 +173,7 @@ async def audio_connection(ws, session):
                                           if session.audio.target_seconds else None),
                         volume=session.audio.volume_summary(),
                         script_match=session.audio.script_match(),
+                        script_order_events=session.audio.script_order_events,
                         disabled_alerts=disabled_alerts,
                     )
                     checkpoints = []

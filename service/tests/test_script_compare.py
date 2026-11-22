@@ -115,6 +115,7 @@ def test_skipping_ahead_in_speech_is_tracked_and_alerted(stt_model, embed, tmp_p
     assert any(e.startswith("Jumped ahead to chunk 7") for m in positions for e in m["events"])
     assert "Skipped ahead" in board.posted
     assert not any(any(ch.isdigit() for ch in p) for p in board.posted)     # pop-ups never name a part
+    assert a.script_order_events == 1                                     # counted for the score
 
 
 def test_disabled_rule_hides_popup_but_keeps_tracking(stt_model, embed, tmp_path):
