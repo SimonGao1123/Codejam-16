@@ -16,6 +16,7 @@ type Props = {
   quietDbfs?: number | null
   silenceDbfs?: number | null // volume graph: below this the speaker counts as not speaking
   desiredWpm?: number | null // pace graph: the pace to aim for
+  durationS?: number | null // fixed window from the first sample (e.g. a 6 s recording); time axis counts up
   live: boolean // false: freeze on the last reading (session ended)
 }
 
@@ -28,12 +29,13 @@ const SCALES = {
 const PITCH_JOIN_S = 0.251
 const VOLUME_JOIN_S = 0.25
 const COLORS = {
-  grid: '#38334e',
-  label: '#8f89a8',
-  trace: '#c4aeff',
-  typical: '#8fd6a1',
-  spike: '#f08a8a',
-  silence: '#8f89a8'
+  // canvas colors, matching theme.css
+  grid: '#2a2c31',
+  label: '#9ea2ab',
+  trace: '#5b8bff',
+  typical: '#7ee2a0',
+  spike: '#ff9ea1',
+  silence: '#9ea2ab'
 }
 const FONT = '12px -apple-system, "Segoe UI", sans-serif'
 
@@ -46,14 +48,15 @@ export default function VoiceGraph({
   quietDbfs = null,
   silenceDbfs = null,
   desiredWpm = null,
+  durationS = null,
   live
 }: Props): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const linesRef = useRef({ typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, live })
+  const linesRef = useRef({ typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, durationS, live })
 
   useEffect(() => {
-    linesRef.current = { typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, live }
-  }, [typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, live])
+    linesRef.current = { typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, durationS, live }
+  }, [typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, durationS, live])
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -114,6 +117,7 @@ function render(
     quietDbfs: number | null
     silenceDbfs: number | null
     desiredWpm: number | null
+    durationS: number | null
     live: boolean
   },
   metric: Props['metric']
@@ -126,10 +130,16 @@ function render(
   if (right <= left || bottom <= top) return
 
   const last = samples.at(-1)
-  const end = metric === 'wpm' && lines.live ? performance.now() / 1000 : (last?.t ?? 0)
+  const fixed = lines.durationS !== null
+  const end = fixed
+    ? (samples[0]?.t ?? 0) + lines.durationS!
+    : metric === 'wpm' && lines.live
+      ? performance.now() / 1000
+      : (last?.t ?? 0)
   // Show the full pace history. Scale short pitch and volume recordings to the available data.
-  const windowSeconds =
-    metric === 'wpm' && samples.length
+  const windowSeconds = fixed
+    ? lines.durationS!
+    : metric === 'wpm' && samples.length
       ? Math.max(VOICE_WINDOW_S, end - samples[0].t)
       : last
         ? Math.min(VOICE_WINDOW_S, Math.max(0.3, end - samples[0].t))
@@ -145,7 +155,7 @@ function render(
   ctx.lineWidth = 1
   if (lines.spikeHz && lines.typicalHz) {
     const lowHz = lines.typicalHz ** 2 / lines.spikeHz
-    ctx.fillStyle = 'rgba(143, 214, 161, 0.10)'
+    ctx.fillStyle = 'rgba(126, 226, 160, 0.10)'
     ctx.fillRect(left, y(lines.spikeHz), right - left, y(lowHz) - y(lines.spikeHz))
   }
   // Horizontal grid and measurement labels.
@@ -160,13 +170,13 @@ function render(
     ctx.fillStyle = COLORS.label
     ctx.fillText(`${tick} ${unit}`, left - 8, y(tick))
   }
-  // time axis: seconds ago
+  // time axis: seconds ago (a fixed window counts up from its start instead)
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
   for (let tick = 0; tick <= 3; tick++) {
     const ago = (windowSeconds * tick) / 3
-    const label = tick ? `-${Number(ago.toFixed(1))}s` : 'now'
-    ctx.fillText(label, x(end - ago), bottom + 6)
+    if (fixed) ctx.fillText(`${Number((windowSeconds - ago).toFixed(1))}s`, x(end - ago), bottom + 6)
+    else ctx.fillText(tick ? `-${Number(ago.toFixed(1))}s` : 'now', x(end - ago), bottom + 6)
   }
 
   // reference lines

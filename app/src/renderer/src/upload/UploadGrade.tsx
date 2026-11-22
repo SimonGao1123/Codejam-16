@@ -556,14 +556,14 @@ export default function UploadGrade(): React.JSX.Element {
                 Attach PDF script
               </button>
               {pdfStatus && (
-                <span style={{ fontSize: '13px', color: '#c4bfda', marginLeft: '12px' }}>
+                <span style={{ fontSize: '13px', color: 'var(--c-text-2)', marginLeft: '12px' }}>
                   {pdfStatus}
                 </span>
               )}
             </div>
 
             <div style={{ marginTop: '14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <label htmlFor="target-min" style={{ fontSize: '14px', color: '#c4bfda' }}>
+              <label htmlFor="target-min" style={{ fontSize: '14px', color: 'var(--c-text-2)' }}>
                 Time limit / Target duration (minutes):
               </label>
               <input
@@ -575,10 +575,10 @@ export default function UploadGrade(): React.JSX.Element {
                 style={{
                   width: '90px',
                   padding: '6px 10px',
-                  background: '#171825',
-                  border: '1px solid #3d3755',
-                  borderRadius: '6px',
-                  color: '#fff'
+                  background: 'var(--c-inset)',
+                  border: '1px solid var(--c-border-strong)',
+                  borderRadius: 'var(--radius)',
+                  color: 'var(--c-text)'
                 }}
                 disabled={processing}
                 value={targetMinutes ?? ''}

@@ -8,8 +8,12 @@ function isVoiceBaseline(value: unknown): value is VoiceBaseline {
   if (!value || typeof value !== 'object') return false
   const { pitch_hz: pitch, volume_dbfs: volume } = value as Partial<VoiceBaseline>
   return (
-    typeof pitch === 'number' && pitch >= 60 && pitch <= 500 &&
-    typeof volume === 'number' && volume >= -70 && volume <= 0
+    typeof pitch === 'number' &&
+    pitch >= 60 &&
+    pitch <= 500 &&
+    typeof volume === 'number' &&
+    volume >= -70 &&
+    volume <= 0
   )
 }
 
@@ -26,7 +30,11 @@ export function saveVoiceCalibration(baseline: VoiceBaseline): void {
   localStorage.setItem(storageKey, JSON.stringify(baseline))
 }
 
-async function recordSample(signal: AbortSignal, onListening: () => void): Promise<Float32Array> {
+async function recordSample(
+  signal: AbortSignal,
+  onListening: () => void,
+  onAudio?: (chunk: Float32Array) => void
+): Promise<Float32Array> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { autoGainControl: false } })
   let capture: MicCapture | undefined
   let timeout: number | undefined
@@ -44,6 +52,7 @@ async function recordSample(signal: AbortSignal, onListening: () => void): Promi
         if (written === 0) onListening()
         const count = Math.min(chunk.length, sample.length - written)
         sample.set(chunk.subarray(0, count), written)
+        onAudio?.(chunk.subarray(0, count))
         written += count
         if (written === sample.length) resolve(sample)
       }).then((opened) => {
@@ -58,11 +67,13 @@ async function recordSample(signal: AbortSignal, onListening: () => void): Promi
   }
 }
 
+/** onAudio: each piece of the 16 kHz sample as it's recorded (for the live graphs). */
 export async function measureVoiceCalibration(
   signal: AbortSignal,
-  onListening: () => void
+  onListening: () => void,
+  onAudio?: (chunk: Float32Array) => void
 ): Promise<VoiceBaseline> {
-  const sample = await recordSample(signal, onListening)
+  const sample = await recordSample(signal, onListening, onAudio)
   signal.throwIfAborted()
   const socket = new WebSocket(`ws://127.0.0.1:${window.api.servicePort}/voice-calibration`)
   let timeout: number | undefined

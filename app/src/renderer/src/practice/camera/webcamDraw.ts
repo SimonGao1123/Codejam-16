@@ -4,19 +4,20 @@
 import type { Style } from '../../liveAlert/ruleDefinitions'
 import type { FrameMessage, OverlayColor, StateMessage } from './webcamProtocol'
 
-export const POSE_CONNECTIONS: [number, number][] = [
-  [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8],
-  [11, 12], [11, 13], [13, 15], [15, 17], [15, 19], [15, 21], [17, 19],
-  [12, 14], [14, 16], [16, 18], [16, 20], [16, 22], [18, 20],
-  [11, 23], [12, 24], [23, 24], [23, 25], [24, 26], [25, 27], [26, 28],
-  [27, 29], [28, 30], [29, 31], [30, 32], [27, 31], [28, 32]
+// A simplified skeleton, readable at a glance: upper body only (shoulders, elbows, wrists, hips;
+// the face and legs aren't drawn), and each hand as a palm outline plus one line per finger, with
+// dots only at the wrist and fingertips.
+const POSE_CONNECTIONS: [number, number][] = [
+  [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24]
 ] // prettier-ignore
-const POSE_MOUTH = new Set([9, 10]) // mouth corners: not used, so not drawn
-export const HAND_CONNECTIONS: [number, number][] = [
-  [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],
-  [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16],
-  [13, 17], [0, 17], [17, 18], [18, 19], [19, 20]
+const POSE_DOTS = [11, 12, 13, 14, 15, 16, 23, 24]
+const HAND_CONNECTIONS: [number, number][] = [
+  [0, 1], [1, 4], // thumb
+  [0, 5], [5, 9], [9, 13], [13, 17], [17, 0], // palm
+  [5, 8], [9, 12], [13, 16], [17, 20] // fingers, base to tip
 ] // prettier-ignore
+const HAND_DOTS = [0, 4, 8, 12, 16, 20] // wrist and fingertips
+const MIN_VISIBILITY = 0.5 // pose points less likely than this to be in view aren't drawn
 
 export const COLORS: Record<OverlayColor, string> = {
   green: 'rgb(80, 200, 80)',
@@ -27,29 +28,46 @@ export const COLORS: Record<OverlayColor, string> = {
 
 type XY = readonly number[] // [x, y, ...] normalized
 
+/** Thick lines and large outlined dots, sized to the video (about 4.5 px lines and 7 px dots at
+ *  1280 wide). Points with a visibility below MIN_VISIBILITY (pose only) are left out. */
 function skeleton(
   ctx: CanvasRenderingContext2D,
   points: XY[],
   connections: [number, number][],
-  color: string,
-  skip: Set<number> = new Set()
+  dots: number[],
+  color: string
 ): void {
   const { width: w, height: h } = ctx.canvas
-  ctx.strokeStyle = color
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  for (const [a, b] of connections) {
-    ctx.moveTo(points[a][0] * w, points[a][1] * h)
-    ctx.lineTo(points[b][0] * w, points[b][1] * h)
-  }
-  ctx.stroke()
-  ctx.fillStyle = COLORS.white
-  points.forEach((p, i) => {
-    if (skip.has(i)) return
+  const shown = (i: number): boolean => (points[i]?.[3] ?? 1) >= MIN_VISIBILITY
+  const line = Math.max(3, w / 280)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  // a dark edge under each line keeps it visible on light clothing and backgrounds
+  for (const [width, style] of [
+    [line + 3, 'rgba(0, 0, 0, 0.55)'],
+    [line, color]
+  ] as const) {
+    ctx.strokeStyle = style
+    ctx.lineWidth = width
     ctx.beginPath()
-    ctx.arc(p[0] * w, p[1] * h, 3, 0, 2 * Math.PI)
+    for (const [a, b] of connections) {
+      if (!shown(a) || !shown(b)) continue
+      ctx.moveTo(points[a][0] * w, points[a][1] * h)
+      ctx.lineTo(points[b][0] * w, points[b][1] * h)
+    }
+    ctx.stroke()
+  }
+  const radius = Math.max(5, w / 180)
+  ctx.fillStyle = COLORS.white
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)'
+  ctx.lineWidth = 2
+  for (const i of dots) {
+    if (!points[i] || !shown(i)) continue
+    ctx.beginPath()
+    ctx.arc(points[i][0] * w, points[i][1] * h, radius, 0, 2 * Math.PI)
     ctx.fill()
-  })
+    ctx.stroke()
+  }
 }
 
 /** Text with a black outline so it reads on any background. */
@@ -72,8 +90,9 @@ function outlined(
 
 /** Pose (green) and hand (yellow) skeletons, drawn straight from the landmarks. */
 export function drawLandmarks(ctx: CanvasRenderingContext2D, frame: FrameMessage): void {
-  if (frame.pose) skeleton(ctx, frame.pose, POSE_CONNECTIONS, COLORS.green, POSE_MOUTH)
-  for (const hand of frame.hands) skeleton(ctx, hand.landmarks, HAND_CONNECTIONS, COLORS.yellow)
+  if (frame.pose) skeleton(ctx, frame.pose, POSE_CONNECTIONS, POSE_DOTS, COLORS.green)
+  for (const hand of frame.hands)
+    skeleton(ctx, hand.landmarks, HAND_CONNECTIONS, HAND_DOTS, COLORS.yellow)
 }
 
 /** Everything Python computed: rest circles, hand labels, status lines, alerts, countdown.
@@ -148,7 +167,7 @@ export function drawOverlay(
 }
 
 // Alert look, matching the Live alerts preview (.la-cue in liveAlerts.css)
-const CUE = { fill: '#f6d58e', border: '#ecc981', text: '#33250d' }
+const CUE = { fill: '#f0b232', border: '#f0b232', text: '#1a1305' }
 const CUE_FONT = '-apple-system, "Segoe UI", sans-serif'
 
 function cueBox(
@@ -174,7 +193,7 @@ function banner(ctx: CanvasRenderingContext2D, top: number, i: number, text: str
   const margin = 40
   const boxH = px + 28
   const y = top + i * (boxH + 12)
-  cueBox(ctx, margin, y, ctx.canvas.width - 2 * margin, boxH, 12)
+  cueBox(ctx, margin, y, ctx.canvas.width - 2 * margin, boxH, 4)
   ctx.font = `600 ${px}px ${CUE_FONT}`
   ctx.fillStyle = CUE.text
   ctx.textAlign = 'center'
@@ -193,7 +212,7 @@ function pill(ctx: CanvasRenderingContext2D, i: number, text: string): void {
   const tw = ctx.measureText(text).width
   const x = ctx.canvas.width - 24 - (tw + 2 * padX)
   const y = 24 + i * (boxH + 10)
-  cueBox(ctx, x, y, tw + 2 * padX, boxH, boxH / 2)
+  cueBox(ctx, x, y, tw + 2 * padX, boxH, 4)
   ctx.fillStyle = CUE.text
   ctx.textBaseline = 'middle'
   ctx.fillText(text, x + padX, y + boxH / 2)

@@ -1,11 +1,3 @@
-@font-face {
-  font-family: 'Bricolage Grotesque';
-  src: url('./BricolageGrotesque.ttf') format('truetype');
-  font-style: normal;
-  font-weight: 200 800;
-  font-display: swap;
-}
-
 html,
 body,
 #root {
@@ -17,12 +9,9 @@ body,
   box-sizing: border-box;
   min-height: 100vh;
   padding: 42px clamp(18px, 5vw, 64px);
-  background: #151722;
-  color: #f2f0fa;
-  font:
-    15px/1.5 'Bricolage Grotesque',
-    system-ui,
-    sans-serif;
+  background: var(--c-page);
+  color: var(--c-text);
+  font: 15px/1.5 var(--font);
   color-scheme: dark;
 }
 
@@ -37,7 +26,7 @@ body,
 }
 .la button:focus-visible,
 .la input:focus-visible {
-  outline: 2px solid #d2c1ff;
+  outline: 2px solid var(--c-accent-text-hover);
   outline-offset: 3px;
 }
 .la-shell {
@@ -49,18 +38,18 @@ body,
 }
 .la-header p {
   margin: 0;
-  color: #c4bfda;
+  color: var(--c-text-2);
 }
 .la-header .la-product {
-  color: #c9b6ff;
+  color: var(--c-accent-text);
   font-weight: 650;
 }
 .la h1 {
   margin: 5px 0;
-  font-size: clamp(34px, 6vw, 52px);
-  font-weight: 800;
-  line-height: 1.12;
-  letter-spacing: -0.045em;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 .la h2 {
   margin: 0 0 16px;
@@ -80,9 +69,9 @@ body,
 .la-card {
   min-width: 0;
   padding: 22px;
-  border: 1px solid #38334e;
-  border-radius: 16px;
-  background: #1e2030;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  background: var(--c-card);
 }
 .la-rules {
   display: grid;
@@ -90,7 +79,7 @@ body,
 }
 .la .la-group {
   margin: 8px 0 4px 12px;
-  color: #a79fc4;
+  color: var(--c-text-2);
   font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.06em;
@@ -102,11 +91,11 @@ body,
   gap: 12px;
   padding-right: 12px;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: var(--radius);
 }
 .la-rule[data-selected='true'] {
-  border-color: #51466f;
-  background: #302941;
+  border-color: var(--c-border-strong);
+  background: var(--c-raised);
 }
 .la-rule-name {
   flex: 1;
@@ -122,9 +111,9 @@ body,
   height: 18px;
   flex: 0 0 auto;
   margin: 0;
-  border: 1px solid #85809b;
-  border-radius: 20px;
-  background: #444055;
+  border: 1px solid var(--c-muted);
+  border-radius: var(--radius-lg);
+  background: var(--c-border-strong);
   cursor: pointer;
 }
 .la-rule input::before {
@@ -133,21 +122,21 @@ body,
   height: 12px;
   margin: 2px;
   border-radius: 50%;
-  background: #f2f0fa;
+  background: var(--c-text);
   content: '';
 }
 .la-rule input:checked {
-  background: #bda8ff;
-  border-color: #bda8ff;
+  background: var(--c-accent);
+  border-color: var(--c-accent);
 }
 .la-rule input:checked::before {
   transform: translateX(14px);
-  background: #251948;
+  background: var(--c-on-accent);
 }
 .la-fields {
   margin-top: 18px;
   padding-top: 16px;
-  border-top: 1px solid #39344d;
+  border-top: 1px solid var(--c-border);
 }
 .la-fields label {
   display: grid;
@@ -156,7 +145,7 @@ body,
   font-size: 13px;
 }
 .la-fields label span {
-  color: #d1beff;
+  color: var(--c-accent-text);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -164,7 +153,7 @@ body,
   grid-column: 1 / -1;
   width: 100%;
   margin: 0;
-  accent-color: #bda8ff;
+  accent-color: var(--c-accent);
 }
 .la-timing {
   display: grid;
@@ -175,7 +164,7 @@ body,
 .la-pace-settings {
   margin-top: 20px;
   padding-top: 16px;
-  border-top: 1px solid #39344d;
+  border-top: 1px solid var(--c-border);
 }
 .la-pace-heading {
   display: flex;
@@ -191,9 +180,9 @@ body,
   width: 32px;
   height: 18px;
   margin: 0 0 12px;
-  border: 1px solid #85809b;
-  border-radius: 20px;
-  background: #444055;
+  border: 1px solid var(--c-muted);
+  border-radius: var(--radius-lg);
+  background: var(--c-border-strong);
   cursor: pointer;
 }
 .la-pace-heading input::before {
@@ -202,20 +191,20 @@ body,
   height: 12px;
   margin: 2px;
   border-radius: 50%;
-  background: #f2f0fa;
+  background: var(--c-text);
   content: '';
 }
 .la-pace-heading input:checked {
-  border-color: #bda8ff;
-  background: #bda8ff;
+  border-color: var(--c-accent);
+  background: var(--c-accent);
 }
 .la-pace-heading input:checked::before {
   transform: translateX(14px);
-  background: #251948;
+  background: var(--c-on-accent);
 }
 .la-pace-settings p {
   margin: 8px 0 0;
-  color: #c4bfda;
+  color: var(--c-text-2);
   font-size: 12px;
 }
 .la-pace-cooldown {
@@ -226,20 +215,20 @@ body,
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
-  border-radius: 10px;
-  background: #151722;
+  border-radius: var(--radius);
+  background: var(--c-page);
 }
 .la-styles button {
   padding: 7px 2px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius);
   background: transparent;
-  color: #c4bfda;
+  color: var(--c-text-2);
   font-size: 13px;
 }
 .la-styles button[aria-pressed='true'] {
-  background: #3e3358;
-  color: #fcfaff;
+  background: var(--c-raised);
+  color: var(--c-text);
 }
 .la-stage {
   display: grid;
@@ -247,39 +236,39 @@ body,
   min-height: 148px;
   margin: 15px 0;
   padding: 12px;
-  border: 1px solid #3d3951;
-  border-radius: 10px;
-  background: #181a27;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  background: var(--c-inset);
 }
 .la-stage p {
   place-self: center;
   margin: 0;
-  color: #c4bfda;
+  color: var(--c-text-2);
   font-size: 13px;
   text-align: center;
 }
 .la-cue {
   padding: 9px 12px;
-  border: 1px solid #ecc981;
-  border-radius: 8px;
-  background: #f6d58e;
-  color: #33250d;
+  border: 1px solid var(--c-warn);
+  border-radius: var(--radius);
+  background: var(--c-warn);
+  color: var(--c-on-warn);
   font-weight: 650;
 }
 .la-cue-banner {
   justify-self: stretch;
 }
 .la-cue-compact {
-  border-radius: 999px;
+  border-radius: var(--radius);
   font-size: 13px;
 }
 .la-preview {
   width: 100%;
   padding: 8px 12px;
   border: 0;
-  border-radius: 8px;
-  background: #c4aeff;
-  color: #231743;
+  border-radius: var(--radius);
+  background: var(--c-accent);
+  color: var(--c-on-accent);
   font-weight: 650;
 }
 .la-preview:disabled {

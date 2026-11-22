@@ -361,3 +361,4 @@ def test_voice_alerts_show_while_waiting_to_calibrate():
     a.calibrate(0.0, delay=0, duration=3, when_ready=True)
     state = a.process(frame(0.0, hands=0), extra_alerts=["Keep talking"])
     assert state["calibration"]["phase"] == "arming" and state["alerts"] == ["Keep talking"]
+

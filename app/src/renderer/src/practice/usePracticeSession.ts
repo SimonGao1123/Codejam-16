@@ -30,6 +30,16 @@ export interface PracticeSessionState {
   cancelPractice: () => void
 }
 
+/** Zooms the camera all the way out, for the widest view its lens allows, if it supports zoom
+ *  (some webcams start zoomed in). Otherwise nothing changes. */
+function widestView(stream: MediaStream): void {
+  const track = stream.getVideoTracks()[0]
+  const zoom = (track?.getCapabilities?.() as { zoom?: { min: number } } | undefined)?.zoom
+  if (!zoom) return
+  const widest = { zoom: zoom.min } as MediaTrackConstraintSet
+  track.applyConstraints({ advanced: [widest] }).catch((err) => console.warn('camera zoom', err))
+}
+
 /** `calibrated`: this session's posture calibration has finished (from WebcamControls). With the
  *  camera on, the session (timer, recording, analysis, scoring) only starts once it has, after the
  *  get-ready countdown; the two run at the same time. */
@@ -148,8 +158,15 @@ export function usePracticeSession(calibrated: boolean): PracticeSessionState {
       {
         enabled: camera,
         name: 'Camera',
-        // 720p: better pose / hand / face tracking, and fills the 16:9 preview
-        constraints: { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
+        // 720p: better pose / hand / face tracking, and fills the 16:9 preview. zoom: lets
+        // widestView() zoom a camera that supports it all the way out (more of the room in view)
+        constraints: {
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            zoom: true
+          } as MediaTrackConstraints
+        },
         setStream: setCameraStream
       },
       {
@@ -172,6 +189,7 @@ export function usePracticeSession(calibrated: boolean): PracticeSessionState {
               return null
             }
             streams.current.push(stream)
+            if (device.name === 'Camera') widestView(stream)
             device.setStream(stream)
             return null
           } catch {

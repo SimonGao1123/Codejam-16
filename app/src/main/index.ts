@@ -32,7 +32,7 @@ function createWindow(servicePort: number): void {
     height: 900,
     show: false,
     autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon } : {}),
+    ...(process.platform !== 'darwin' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -62,6 +62,8 @@ function createWindow(servicePort: number): void {
 
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.electron')
+  // macOS: show the Colloquia icon in the Dock (in development it would be Electron's)
+  if (process.platform === 'darwin') app.dock?.setIcon(icon)
 
   // F12 opens DevTools in dev; Cmd/Ctrl+R reload is disabled in production
   app.on('browser-window-created', (_, window) => {
