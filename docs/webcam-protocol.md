@@ -74,7 +74,7 @@ Sent when the connection opens and whenever a rule changes on the Live alerts ta
 |---|---|---|
 | `tilt` | Level your shoulders | degrees from calibrated |
 | `look_down` | Look up | degrees of head pitch below calibrated |
-| `face` | Face the camera | — |
+| `face` | Stay in frame | — |
 | `hands_missing` | Show both hands or step back | — |
 | `still` | Use your hands | — |
 | `fast` | Slow your hands | wrist speed, shoulder widths / s |

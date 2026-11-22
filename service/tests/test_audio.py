@@ -231,8 +231,8 @@ def test_disabled_alerts_exclude_only_their_scoring_checks():
     assert set(checks["body_language"]["checks"]) == {"tilt"}
     assert set(checks["speaking_pace"]["checks"]) == {"moderate_pace"}
     assert checks["script_accuracy"]["points"] is None
-    assert report["measured_points"] == 5.5
-    assert report["score"] == 63.6
+    assert report["measured_points"] == 5
+    assert report["score"] == 60
     assert [tip["rule"] for tip in report["feedback"]] == ["moderate_pace"]
 
 
@@ -332,7 +332,8 @@ def test_session_score_has_recording_relative_checkpoints():
     assert report["type"] == "session_score"
     assert report["categories"]["filler"]["points"] is None
     assert report["checkpoints"] == [
-        {"at": 0.5, "category": "body_language", "label": "Face the camera"},
+        {"at": 0.5, "category": "body_language", "label": "Show both hands or step back"},
+        {"at": 0.5, "category": "body_language", "label": "Stay in frame"},
         {"at": 1.85, "category": "filler", "label": "Filler: you know"},
     ]
 

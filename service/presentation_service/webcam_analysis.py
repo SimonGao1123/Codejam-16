@@ -5,7 +5,7 @@ thresholds), minus OpenCV/MediaPipe: Electron runs the models and draws the over
 
   - shoulder tilt (degrees)          -> "Level your shoulders"  (vs calibration)
   - eye level: head pitch + eye gaze -> "Look up"               (vs calibration)
-  - face visible                     -> "Face the camera"
+  - face and shoulders in frame     -> "Stay in frame"
   - both hands visible               -> "Show both hands or step back"
   - hand motion: none for ~10 s      -> "Use your hands"
                  too fast / too busy -> "Slow your hands"
@@ -26,6 +26,9 @@ import numpy as np
 L_SHOULDER, R_SHOULDER, L_WRIST, R_WRIST = 11, 12, 15, 16      # pose landmarks
 HAND_WRIST, HAND_MIDDLE_MCP = 0, 9                             # hand landmarks
 FOREHEAD, CHIN = 10, 152                                       # face landmarks
+FACE_EDGES = (FOREHEAD, CHIN, 234, 454)
+FRAMING_MARGIN = 0.03
+MIN_FACE_HEIGHT = 0.08
 
 # Thresholds (guesses - tune on real recordings). Tilt and eye level are deviations from calibration.
 TILT_MAX_DEG = 6            # shoulder tilt this far from calibrated = uneven
@@ -33,8 +36,8 @@ LOOK_DOWN_MAX_DEG = 15      # head pitched down this far past calibrated = looki
 EYES_DOWN_MAX = 0.35        # eyeLookDown blendshape score (0-1) this far above calibrated = eyes down
 # Hand thresholds are absolute (not calibrated). Wrist positions are in shoulder widths from the
 # shoulder midpoint, so distance to the camera and body sway don't matter.
-FACE_MISSING_S = 1.0        # no face seen for this long = warn
-HANDS_MISSING_S = 1.5       # fewer than 2 hands seen for this long = warn
+FACE_MISSING_S = 1.0        # poor framing for this long = warn
+HANDS_MISSING_S = 1.0       # fewer than 2 hands seen for this long = warn
 HAND_STILL = 0.15           # average wrist speed (shoulder-widths/s) over the last 1 s below this = not moving
 HAND_STILL_S = 10           # not moving (or both hands at rest) for this long = warn
 REST_RADIUS = 0.3           # wrist within this many shoulder widths of its calibrated rest spot = at rest
@@ -106,6 +109,26 @@ def shoulder_tilt(lm, w, h):
     tilt = math.degrees(math.atan2(dy, dx))
     tilt = tilt - 180 if tilt > 90 else tilt + 180 if tilt < -90 else tilt
     return tilt, math.hypot(dx, dy) or 1
+
+
+def inside_frame(x, y):
+    return (FRAMING_MARGIN <= x <= 1 - FRAMING_MARGIN
+            and FRAMING_MARGIN <= y <= 1 - FRAMING_MARGIN)
+
+
+def face_in_frame(face):
+    if not face:
+        return False
+    landmarks = face["landmarks"]
+    return (landmarks[CHIN][1] - landmarks[FOREHEAD][1] >= MIN_FACE_HEIGHT
+            and all(inside_frame(*landmarks[i][:2]) for i in FACE_EDGES))
+
+
+def shoulders_in_frame(pose):
+    return bool(pose and all(
+        pose[i].visibility > 0.5 and inside_frame(pose[i].x, pose[i].y)
+        for i in (L_SHOULDER, R_SHOULDER)
+    ))
 
 
 def head_pitch(face, w, h):
@@ -330,7 +353,7 @@ class WebcamAnalyzer:
     def __init__(self):
         self.tilt_alert = Alert("Level your shoulders", hold_s=1.5)
         self.down_alert = Alert("Look up", hold_s=1.0)
-        self.face_alert = Alert("Face the camera", hold_s=FACE_MISSING_S)
+        self.face_alert = Alert("Stay in frame", hold_s=FACE_MISSING_S)
         self.missing_alert = Alert("Show both hands or step back", hold_s=HANDS_MISSING_S)
         self.still_alert = Alert("Use your hands", hold_s=HAND_STILL_S)
         self.fast_alert = Alert("Slow your hands", hold_s=0.4)
@@ -412,13 +435,12 @@ class WebcamAnalyzer:
             self.calib.start(self.last_t if t is None else t,
                              CALIBRATE_DELAY_S if delay is None else delay, duration)
 
-    def _readiness(self, now, pose, face, both_recent, w, h):
+    def _readiness(self, now, pose, face_visible, shoulders_visible, both_recent, w, h):
         """What's stopping calibration right now: [] when the speaker is in frame and still."""
         missing = []
-        if not face:
-            missing.append("show your face")
-        shoulders = pose and all(pose[i].visibility > 0.5 for i in (L_SHOULDER, R_SHOULDER))
-        if not shoulders:
+        if not face_visible:
+            missing.append("show your face fully in frame")
+        if not shoulders_visible:
             missing.append("step back so your shoulders are in frame")
         if self.calib.include_hands and not both_recent:
             missing.append("show both hands")
@@ -476,6 +498,9 @@ class WebcamAnalyzer:
         pose = points(msg["pose"]) if msg.get("pose") else None
         hands = msg.get("hands") or []
         face = msg.get("face")
+        face_visible = face_in_frame(face)
+        shoulders_visible = shoulders_in_frame(pose)
+        framing_bad = not (face_visible and shoulders_visible)
 
         lines, rest_circles, hand_labels = [], [], []
         tilt_bad = down_bad = fast = still = repeating = False
@@ -494,7 +519,7 @@ class WebcamAnalyzer:
         if pose:
             lm = pose
             tilt, width = shoulder_tilt(lm, w, h)
-            if base:
+            if base and shoulders_visible:
                 off = tilt - base["tilt"]
                 tilt_bad = abs(off) > self.limits["tilt"]
                 lines.append(line(f"shoulder tilt: {tilt:+.1f} deg  ({off:+.1f} vs calibrated)",
@@ -510,7 +535,7 @@ class WebcamAnalyzer:
                               for j, i in enumerate((L_WRIST, R_WRIST))]
             self.motion.add(now, wrists, match_hands(hand_points, pose_wrists_px, w, h))
             speed, busy = self.motion.speed(0.3), self.motion.activity(5.0)
-            fast = speed > self.limits["fast"] or busy > HAND_BUSY
+            fast = bool(hands) and (speed > self.limits["fast"] or busy > HAND_BUSY)
             # at rest = every hand with a calibrated rest spot is in view and within REST_RADIUS of it
             rests = [base[k] if base else None for k in ("rest_l", "rest_r")]
             at_rest = any(rests) and all(p and math.dist(r, p) < REST_RADIUS for r, p in zip(rests, wrists) if r)
@@ -540,7 +565,7 @@ class WebcamAnalyzer:
                                 "text": f"{hand['handedness'][0]} {angle:+.0f} deg"})
 
         # eye level (face landmarks + blendshapes)
-        if face:
+        if face_visible:
             pitch = head_pitch(points(face["landmarks"]), w, h)
             eyes = eyes_down(face["blendshapes"])
             if base:
@@ -551,13 +576,16 @@ class WebcamAnalyzer:
             else:
                 lines.append(line(f"eye level: head pitch {pitch:+.0f} deg, eyes down {eyes:.2f}"))
         else:
-            lines.append(line("no face detected", "red"))
+            lines.append(line("face not fully visible", "red"))
 
         lines.extend(extra_lines)
 
         if self.calib.busy:
-            self._update_calibration(now, self._readiness(now, pose, face, both_recent, w, h))
-        if self.calib.add(now, tilt=tilt, pitch=pitch, eyes=eyes, rest_l=wrists[0], rest_r=wrists[1]) and self.calib.baseline:
+            self._update_calibration(
+                now, self._readiness(now, pose, face_visible, shoulders_visible, both_recent, w, h)
+            )
+        if self.calib.add(now, tilt=tilt if shoulders_visible else None, pitch=pitch, eyes=eyes,
+                          rest_l=wrists[0], rest_r=wrists[1]) and self.calib.baseline:
             for a in (self.tilt_alert, self.down_alert, self.still_alert):
                 a.reset()
 
@@ -565,16 +593,17 @@ class WebcamAnalyzer:
         alerts = []
         if self.scoring and (self.scoring_started_at is None or now >= self.scoring_started_at):
             conditions = {
-                "face": not face,
-                "tilt": tilt_bad if base and pose else None,
-                "look_down": down_bad if base and face else None,
+                "face": framing_bad,
+                "tilt": tilt_bad if base and shoulders_visible else None,
+                "look_down": down_bad if base and face_visible else None,
+                "hands_missing": not both_hands,
                 "still": still if pose and both_recent else None,
                 "repeat": repeating if pose and both_recent else None,
-                "fast": fast if any(wrists) else None,
+                "fast": fast if hands and any(wrists) else None,
             }
             self._score_frame(now, dict.fromkeys(conditions) if calibrating else conditions)
         if not self.calib.busy:
-            checks = ((self.face_alert, not face), (self.tilt_alert, tilt_bad), (self.down_alert, down_bad),
+            checks = ((self.face_alert, framing_bad), (self.tilt_alert, tilt_bad), (self.down_alert, down_bad),
                       (self.missing_alert, not both_hands),
                       (self.still_alert, still), (self.fast_alert, fast), (self.repeat_alert, repeating))
             alerts = [a.text for a, bad in checks if a.update(bad, now)]

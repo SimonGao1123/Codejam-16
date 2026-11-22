@@ -13,7 +13,8 @@ minute, then compared to two thresholds:
   * at or above the BAD rate   -> the rule's full maximum deduction
   * in between                 -> the deduction rises linearly
 
-Voice and body language use sustained incident counts directly, regardless of session length.
+Voice and most body-language checks use sustained incident counts directly.
+Hand visibility deductions are based on incidents per minute.
 """
 
 from collections.abc import Collection, Mapping
@@ -36,13 +37,14 @@ VOICE_RULES = {
 }
 # Rule ID: (maximum points, fraction lost per sustained incident, feedback)
 BODY_RULES = {
-    "look_down": (3, 0.75, "Bring your eyes back to the calibrated camera position after checking notes."),
-    "face": (3, 1.0, "Stay in frame and face the camera while speaking."),
-    "tilt": (1.5, 0.75, "Keep your shoulders level with your calibrated posture."),
-    "repeat": (0.75, 0.75, "Vary your gestures and avoid repeating the same motion in quick succession."),
-    "still": (1, 0.75, "Use an occasional purposeful gesture to emphasize a point."),
-    "fast": (0.75, 0.75, "Slow down quick hand movements so each gesture has a clear purpose."),
+    "look_down": (1.5, 0.75, "Bring your eyes back to the calibrated camera position after checking notes."),
+    "face": (2.5, 1.0, "Keep your full face and both shoulders visible throughout the presentation."),
+    "tilt": (1, 0.75, "Keep your shoulders level with your calibrated posture."),
+    "repeat": (1.5, 0.75, "Vary your gestures and avoid repeating the same motion in quick succession."),
+    "still": (2, 0.75, "Use an occasional purposeful gesture to emphasize a point."),
+    "fast": (1.5, 0.75, "Slow down quick hand movements so each gesture has a clear purpose."),
 }
+HAND_CHECKS = ("still", "repeat", "fast")
 PACE_MAX_POINTS = 4
 # Presentation guidance varies with context.  A 140 WPM centre and a 40 WPM
 # comfortable band are sensible defaults; the centre is configurable in the UI.
@@ -222,6 +224,7 @@ def score_presentation(
     4 for speaking pace, 10 for body language, and 6 for script accuracy. The score
     is the share of the available points kept, scaled to 100. measured_points shows
     how much of the rubric was evaluated. Checks tied to disabled alerts are excluded.
+    A second sustained framing failure can deduct another 2.5 measured body-language points.
     With no measured data, score is None.
     """
     minutes = _minutes(duration_seconds)
@@ -248,6 +251,15 @@ def score_presentation(
             "feedback": "Try a short pause instead of filling the silence." if count else None,
         }
 
+    missing_hands = (
+        _count(body_incidents.get("hands_missing", 0))
+        if body_incidents and "hands_missing" not in disabled_alerts
+        else 0
+    )
+    if missing_hands:
+        # Missing hands prevented gesture measurements, but enabled hand checks still count.
+        body_incidents = {**dict.fromkeys(HAND_CHECKS, 0), **body_incidents}
+
     categories = {
         "filler": _category(filler_checks),
         "voice_tone": _sustained_category(voice_incidents, VOICE_RULES),
@@ -264,15 +276,41 @@ def score_presentation(
             })
             for name, category in categories.items()
         }
+    body = categories["body_language"]
+    missing_hands_deduction = 0
+    if missing_hands:
+        available_hand_points = sum(
+            check["max_points"] - check["deduction"]
+            for key, check in body["checks"].items() if key in HAND_CHECKS
+        )
+        hand_scoring_minutes = max(MIN_SCORING_MINUTES, minutes or MIN_SCORING_MINUTES)
+        missing_hands_deduction = min(
+            round(0.75 * missing_hands / hand_scoring_minutes, 3), available_hand_points
+        )
+        body["points"] -= missing_hands_deduction
+        body["deduction"] += missing_hands_deduction
+    framing = body["checks"].get("face")
+    second_framing_deduction = 0
+    if framing and framing["count"] >= 2:
+        second_framing_deduction = min(body["points"], framing["max_points"])
+        body["points"] -= second_framing_deduction
+        body["deduction"] += second_framing_deduction
+
     measured_points = sum(category["max_points"] for category in categories.values())
     deducted = sum(category["deduction"] for category in categories.values())
     feedback = [
         {"category": category_name, "rule": rule_id, "message": check["feedback"],
-         "deduction": check["deduction"]}
+         "deduction": check["deduction"] + (second_framing_deduction if category_name == "body_language" and rule_id == "face" else 0)}
         for category_name, category in categories.items()
         for rule_id, check in category["checks"].items()
         if check["feedback"] and check["deduction"] > 0
     ]
+    if missing_hands_deduction:
+        feedback.append({
+            "category": "body_language", "rule": "hands_missing",
+            "message": "Keep both hands visible. Frequent losses of hand visibility lower your score.",
+            "deduction": missing_hands_deduction,
+        })
     feedback.sort(key=lambda tip: tip["deduction"], reverse=True)
     return {
         "score": round(SCORE_OUT_OF * (measured_points - deducted) / measured_points, 1)
