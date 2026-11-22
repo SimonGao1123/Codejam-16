@@ -4,6 +4,7 @@ import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { startAnalysisService } from './analysisService'
+import { registerPracticeLibraryIpc } from './practiceLibrary'
 import { registerWebcamRecorderIpc } from './webcamRecorder'
 
 // The built UI is served from app://renderer/ instead of file://, because MediaPipe loads its
@@ -65,6 +66,7 @@ app.whenReady().then(async () => {
   })
 
   registerWebcamRecorderIpc()
+  registerPracticeLibraryIpc()
   serveRenderer()
   // the Python analysis service starts loading its models while the window opens
   const servicePort = await startAnalysisService()

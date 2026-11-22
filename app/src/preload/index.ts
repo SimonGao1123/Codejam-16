@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type { PracticeAttempt, PracticeLibrary } from '../main/practiceLibrary'
 import type { SavedRecording } from '../main/webcamRecorder'
 
 // the Python analysis service's port, passed by the main process (see src/main/analysisService.ts)
@@ -8,13 +9,24 @@ const portArg = process.argv.find((a) => a.startsWith('--analysis-service-port='
 // APIs exposed to the renderer as window.api
 const api = {
   servicePort: Number(portArg?.split('=')[1]) || 8766,
+  practiceLibrary: {
+    list: (): Promise<PracticeLibrary> => ipcRenderer.invoke('practice-library:list'),
+    createFolder: (name: string): Promise<PracticeLibrary> =>
+      ipcRenderer.invoke('practice-library:create-folder', name),
+    saveAttempt: (attempt: PracticeAttempt): Promise<PracticeLibrary> =>
+      ipcRenderer.invoke('practice-library:save-attempt', attempt),
+    moveAttempt: (
+      entry: Pick<PracticeAttempt, 'id' | 'completedAt'>,
+      folderId: string | null
+    ): Promise<PracticeLibrary> => ipcRenderer.invoke('practice-library:move-attempt', entry, folderId)
+  },
   webcamRecorder: {
     list: (): Promise<SavedRecording[]> => ipcRenderer.invoke('webcam-recorder:list'),
     start: (): Promise<{ dir: string; base: string }> =>
       ipcRenderer.invoke('webcam-recorder:start'),
     chunk: (chunk: Uint8Array): void => ipcRenderer.send('webcam-recorder:chunk', chunk),
     line: (line: string): void => ipcRenderer.send('webcam-recorder:line', line),
-    stop: (): Promise<{ video: string; data: string; playbackUrl: string } | null> =>
+    stop: (): Promise<{ id: string; video: string; data: string; playbackUrl: string } | null> =>
       ipcRenderer.invoke('webcam-recorder:stop')
   }
 }

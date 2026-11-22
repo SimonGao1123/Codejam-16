@@ -20,6 +20,7 @@ import {
 const NO_FILLERS = Object.fromEntries(FILLER_WORDS.map((w) => [w, 0])) as Record<FillerWord, number>
 const FLASH_MS = 1500 // how long a filler chip stays highlighted after it's counted
 const SCRIPT_DEBOUNCE_MS = 500 // send the script once typing pauses, not on every keystroke
+const SCORE_TIMEOUT_MS = 30_000
 
 export interface AudioAnalysis {
   connected: boolean
@@ -35,20 +36,20 @@ export interface AudioAnalysis {
   scriptChunks: string[] // the script as Python split it ([] = no script)
   scriptReady: boolean // comparison model loaded
   scriptPosition: ScriptPositionMessage | null
+  finishScoring: () => Promise<SessionScoreMessage | null>
 }
 
 /** `script`: the user's script text; empty = no script (comparison off). */
 export function useAudioAnalysis(
   micStream: MediaStream | null,
   script: string,
-  startedAt: number | null,
-  onScore: (score: SessionScoreMessage | null) => void
+  startedAt: number | null
 ): AudioAnalysis {
   const clientRef = useRef<AudioAnalysisClient | null>(null)
   const pitchRef = useRef<VoiceSample[]>([])
   const volumeRef = useRef<VoiceSample[]>([])
-  const sessionNumber = useRef(0)
-  const pendingScores = useRef<number[]>([])
+  const scoringActive = useRef(false)
+  const pendingScores = useRef<((score: SessionScoreMessage | null) => void)[]>([])
   const [connected, setConnected] = useState(false)
   const [sentences, setSentences] = useState<string[]>([])
   const [partial, setPartial] = useState('')
@@ -64,10 +65,14 @@ export function useAudioAnalysis(
 
   useEffect(() => {
     const client = new AudioAnalysisClient()
+    const scoreReplies = pendingScores.current
     clientRef.current = client
     client.setScript(scriptRef.current) // stored now, sent as soon as the socket opens
     client.onConnectionChange = (online) => {
-      if (!online) pendingScores.current = []
+      if (!online) {
+        scoringActive.current = false
+        scoreReplies.splice(0).forEach((resolve) => resolve(null))
+      }
       setConnected(online)
     }
     client.onMessage = (msg) => {
@@ -91,8 +96,8 @@ export function useAudioAnalysis(
         setScriptPosition(null)
       } else if (msg.type === 'script_position') {
         setScriptPosition(msg)
-      } else if (msg.type === 'session_score' && pendingScores.current.shift() === sessionNumber.current) {
-        onScore(msg)
+      } else if (msg.type === 'session_score') {
+        scoreReplies.shift()?.(msg)
       }
     }
     function applyTranscript(msg: TranscriptMessage): void {
@@ -106,10 +111,14 @@ export function useAudioAnalysis(
       }
     }
     return () => {
+      client.onConnectionChange = null
+      client.onMessage = null
       client.close()
       clientRef.current = null
+      scoringActive.current = false
+      scoreReplies.splice(0).forEach((resolve) => resolve(null))
     }
-  }, [onScore])
+  }, [])
 
   // the script: sent once typing pauses (and again after a reconnect, by the client)
   useEffect(() => {
@@ -130,10 +139,7 @@ export function useAudioAnalysis(
   // Send session controls even when practicing with only a camera.
   useEffect(() => {
     const client = clientRef.current
-    if (startedAt === null) return
-    const number = ++sessionNumber.current
-    onScore(null)
-    if (!connected || !client) return
+    if (startedAt === null || !connected || !client) return
     setSentences([])
     setPartial('')
     setFillers(NO_FILLERS)
@@ -148,19 +154,32 @@ export function useAudioAnalysis(
       client.setScript(scriptRef.current)
     }
     client.send({ type: 'session_start', started_at: startedAt })
-    return () => {
-      if (!client.connected) return
-      pendingScores.current.push(number)
+    scoringActive.current = true
+  }, [startedAt, connected])
+
+  function finishScoring(): Promise<SessionScoreMessage | null> {
+    const client = clientRef.current
+    if (!scoringActive.current || !client?.connected) return Promise.resolve(null)
+    scoringActive.current = false
+    return new Promise((resolve) => {
+      const timeout = window.setTimeout(() => resolve(null), SCORE_TIMEOUT_MS)
+      // Keep replies in order even when one arrives after its timeout.
+      pendingScores.current.push((score) => {
+        window.clearTimeout(timeout)
+        resolve(score)
+      })
       client.send({ type: 'session_end' })
-    }
-  }, [startedAt, connected, onScore])
+    })
+  }
 
   useEffect(() => {
     const client = clientRef.current
     if (startedAt === null || !connected || !micStream || !client) return
     let stopped = false
     let capture: { stop(): void } | null = null
-    captureMic(micStream, (samples, chunkStart) => client.sendAudio(samples, chunkStart)).then(
+    captureMic(micStream, (samples, chunkStart) => {
+      if (scoringActive.current) client.sendAudio(samples, chunkStart)
+    }).then(
       (c) => (stopped ? c.stop() : (capture = c)),
       (err) => console.error('microphone capture failed', err)
     )
@@ -190,6 +209,7 @@ export function useAudioAnalysis(
     volume: volumeRef,
     scriptChunks,
     scriptReady,
-    scriptPosition
+    scriptPosition,
+    finishScoring
   }
 }

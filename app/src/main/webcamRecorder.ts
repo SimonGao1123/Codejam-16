@@ -11,7 +11,7 @@ import { Readable } from 'stream'
 interface Recording {
   video: WriteStream
   data: WriteStream
-  paths: { video: string; data: string; playbackUrl: string }
+  paths: { id: string; video: string; data: string; playbackUrl: string }
 }
 
 let current: Recording | null = null
@@ -103,10 +103,12 @@ export function registerWebcamRecorderIpc(): void {
     if (current) await Promise.all([close(current.video), close(current.data)])
     await mkdir(dir, { recursive: true })
     const base = randomUUID()
+    const id = `${base}.webm`
     const paths = {
-      video: join(dir, `${base}.webm`),
+      id,
+      video: join(dir, id),
       data: join(dir, `${base}.jsonl`),
-      playbackUrl: playbackUrl(`${base}.webm`)
+      playbackUrl: playbackUrl(id)
     }
     const video = createWriteStream(paths.video)
     const data = createWriteStream(paths.data)

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import type { PracticeFolder, PracticeLibrary } from '../../../main/practiceLibrary'
+import FolderSelect from '../menu/FolderSelect'
 import type { SessionScoreMessage } from './audio/audioProtocol'
 import { useAudioAnalysis } from './audio/useAudioAnalysis'
 import CameraPreview from './components/CameraPreview'
@@ -12,18 +14,59 @@ import { usePracticeSession } from './usePracticeSession'
 
 export default function Practice({
   visible,
-  onBusyChange
+  onBusyChange,
+  folders,
+  initialFolderId,
+  onFolderChange,
+  onLibraryChange
 }: {
   visible: boolean
   onBusyChange: (busy: boolean) => void
+  folders: PracticeFolder[]
+  initialFolderId: string | null
+  onFolderChange: (folderId: string | null) => void
+  onLibraryChange: (library: PracticeLibrary) => void
 }): React.JSX.Element {
   const session = usePracticeSession()
   const [score, setScore] = useState<SessionScoreMessage | null>(null)
+  const [folderId, setFolderId] = useState(initialFolderId)
+  const [finishing, setFinishing] = useState(false)
+  const [scoreUnavailable, setScoreUnavailable] = useState(false)
+  const [libraryError, setLibraryError] = useState(false)
   const { running, finished, camera, microphone, cameraStream, micStream, pending } = session
   const [script, setScript] = useState('') // optional; empty = no script tracking
-  const speech = useAudioAnalysis(micStream, script, session.startedAt, setScore)
-  const busy = running || session.preparing || session.saving
+  const speech = useAudioAnalysis(micStream, script, session.startedAt)
+  const busy = running || session.preparing || session.saving || finishing
   useEffect(() => onBusyChange(busy), [busy, onBusyChange])
+
+  async function endPractice(): Promise<void> {
+    if (!running || finishing) return
+    setFinishing(true)
+    const completedAt = Date.now()
+    try {
+      const [recording, result] = await Promise.all([session.endPractice(), speech.finishScoring()])
+      setScore(result)
+      setScoreUnavailable(result === null)
+      const savedScore =
+        result?.score != null
+          ? { points: result.score, maximum: result.max_score, measured: result.measured_points }
+          : null
+      if (recording || savedScore) {
+        const library = await window.api.practiceLibrary.saveAttempt({
+          id: recording?.id ?? crypto.randomUUID(),
+          folderId,
+          completedAt,
+          score: savedScore
+        })
+        onLibraryChange(library)
+      }
+    } catch (error) {
+      console.error(error)
+      setLibraryError(true)
+    } finally {
+      setFinishing(false)
+    }
+  }
 
   return (
     <main className="ph-practice">
@@ -36,6 +79,18 @@ export default function Practice({
           {running ? 'In progress' : finished ? 'Session complete' : 'Ready to practice'}
         </span>
       </header>
+      <div className="ph-practice-folder">
+        <FolderSelect
+          folders={folders}
+          value={folderId}
+          label="Practice folder"
+          onChange={(id) => {
+            setFolderId(id)
+            onFolderChange(id)
+          }}
+          disabled={busy}
+        />
+      </div>
       <div className="ph-workspace">
         <CameraPreview
           cameraStream={cameraStream}
@@ -51,6 +106,7 @@ export default function Practice({
           preparing={session.preparing}
           countdown={session.countdown}
           saving={session.saving}
+          finishing={finishing}
           finished={finished}
           seconds={session.seconds}
           camera={camera}
@@ -60,9 +116,11 @@ export default function Practice({
           setMicrophone={session.setMicrophone}
           startPractice={() => {
             setScore(null)
+            setScoreUnavailable(false)
+            setLibraryError(false)
             return session.startPractice()
           }}
-          endPractice={session.endPractice}
+          endPractice={() => void endPractice()}
         />
       </div>
       <ScriptPanel script={script} setScript={setScript} running={running} speech={speech} />
@@ -76,6 +134,12 @@ export default function Practice({
         />
       )}
       {finished && score && <SessionResults result={score} />}
+      {scoreUnavailable && <p role="status">A score wasn’t available for this attempt.</p>}
+      {libraryError && (
+        <p className="ph-error" role="status">
+          Couldn’t save this attempt to the folder.
+        </p>
+      )}
       <TranscriptPanel speech={speech} running={running} />
     </main>
   )
