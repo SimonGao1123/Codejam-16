@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PlaybackCheckpoint } from '../audio/audioProtocol'
 
 type Props = {
   url: string
+  visible: boolean
   recordedDuration: number
   checkpoints: PlaybackCheckpoint[]
   isVideo?: boolean
@@ -16,6 +17,7 @@ function clock(seconds: number): string {
 
 export default function PresentationPlayback({
   url,
+  visible,
   recordedDuration,
   checkpoints,
   isVideo = true
@@ -42,6 +44,13 @@ export default function PresentationPlayback({
     duration > 0
       ? checkpoints.filter(({ at }) => Number.isFinite(at) && at >= 0 && at <= duration)
       : []
+  useEffect(() => {
+    if (!visible) videoRef.current?.pause()
+  }, [visible])
+  // Streamed WebM files may not carry duration metadata.
+  const duration =
+    Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : recordedDuration
+  const moments = checkpoints.filter(({ at }) => at >= 0 && at <= duration)
   const markers = new Map<number, PlaybackCheckpoint[]>()
   if (duration > 0) {
     for (const checkpoint of moments) {

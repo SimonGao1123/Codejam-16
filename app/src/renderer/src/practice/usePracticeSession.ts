@@ -200,8 +200,8 @@ export function usePracticeSession(calibrated: boolean): PracticeSessionState {
     setStarting(false)
   }
 
-  function endPractice(): void {
-    if (started === null) return
+  async function endPractice(): ReturnType<WebcamRecorder['stop']> {
+    if (started === null) return null
     const duration = (performance.now() - started) / 1000
     setSeconds(Math.floor(duration))
     setRecordingDuration(duration)
@@ -215,20 +215,19 @@ export function usePracticeSession(calibrated: boolean): PracticeSessionState {
     setDeviceError('')
     setStarted(null)
     setFinished(true)
-    if (saved) {
-      const request = generation.current
-      setSaving(true)
-      void saved
-        .then((paths) => {
-          if (generation.current === request) setPlaybackUrl(paths?.playbackUrl ?? null)
-        })
-        .catch((error) => {
-          console.error(error)
-          if (generation.current === request) setRecordingError('Could not save the recording.')
-        })
-        .finally(() => {
-          if (generation.current === request) setSaving(false)
-        })
+    if (!saved) return null
+    const request = generation.current
+    setSaving(true)
+    try {
+      const paths = await saved
+      if (generation.current === request) setPlaybackUrl(paths?.playbackUrl ?? null)
+      return paths
+    } catch (error) {
+      console.error(error)
+      if (generation.current === request) setRecordingError('Could not save the recording.')
+      return null
+    } finally {
+      if (generation.current === request) setSaving(false)
     }
   }
 

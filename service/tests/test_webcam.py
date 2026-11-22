@@ -1,5 +1,6 @@
 import math
 
+from presentation_service.scoring import score_presentation
 from presentation_service.webcam_analysis import WebcamAnalyzer
 
 FPS = 30
@@ -52,7 +53,105 @@ def test_state_shape_and_lines():
 
 def test_face_missing_alert_after_1s():
     first, _ = run(WebcamAnalyzer(), 4, face=lambda t: t < 2)
-    assert first.get("Face the camera") == 3.0
+    assert first.get("Stay in frame") == 3.0
+
+
+def test_one_sustained_face_absence_deducts_body_language_points():
+    a = WebcamAnalyzer()
+    a.start_scoring()
+    run(a, 4, face=lambda t: t < 2)
+    assert a.incidents["face"] == 1
+
+    report = score_presentation(body_incidents=a.incidents, duration_seconds=300)
+    face = report["categories"]["body_language"]["checks"]["face"]
+    assert face["deduction"] == face["max_points"] == 2.5
+
+
+def test_framing_counts_partial_or_distant_face_and_missing_shoulders():
+    for bad_framing in ("cropped face", "distant face", "cropped shoulder"):
+        a = WebcamAnalyzer()
+        a.start_scoring()
+        for i in range(2 * FPS):
+            sample = frame(i / FPS)
+            if bad_framing == "cropped face":
+                sample["face"]["landmarks"][234][0] = 0.01
+            elif bad_framing == "distant face":
+                sample["face"]["landmarks"][152][1] = 0.25
+            else:
+                sample["pose"][11][0] = 0.01
+            state = a.process(sample)
+        assert "Stay in frame" in state["alerts"], bad_framing
+        assert a.incidents["face"] == 1, bad_framing
+        report = score_presentation(body_incidents=a.incidents)
+        assert report["categories"]["body_language"]["deduction"] == 2.5
+
+
+def test_first_two_framing_failures_each_deduct_two_and_a_half_points():
+    counts = {"face": 1, "tilt": 0, "look_down": 0, "still": 1, "repeat": 0, "fast": 0}
+    hands = {"still", "repeat", "fast"}
+    report = score_presentation(body_incidents=counts, voice_incidents={"pitch": 0}, disabled_alerts=hands)
+    body = report["categories"]["body_language"]
+    assert body["points"] == body["deduction"] == 2.5 and body["max_points"] == 5
+    assert report["categories"]["voice_tone"]["points"] == 2
+    assert [tip["deduction"] for tip in report["feedback"]] == [2.5]
+
+    counts["face"] = 2
+    report = score_presentation(body_incidents=counts, disabled_alerts=hands)
+    body = report["categories"]["body_language"]
+    assert body["points"] == 0 and body["max_points"] == body["deduction"] == 5
+    assert [tip["deduction"] for tip in report["feedback"]] == [5]
+
+    report = score_presentation(body_incidents=counts, disabled_alerts=hands | {"face"})
+    body = report["categories"]["body_language"]
+    assert body["points"] == body["max_points"] == 2.5
+
+
+def test_missing_hands_cost_enabled_hand_points_even_when_pose_reports_wrists():
+    a = WebcamAnalyzer()
+    run(a, 5, calibrate_at=0.5, hands=0)
+    a.start_scoring()
+    run(a, 1, start=5, hands=0)
+    assert a.incidents["hands_missing"] == 0
+    a.process(frame(6.0, hands=0))
+    assert a.incidents == {"face": 0, "tilt": 0, "look_down": 0, "hands_missing": 1}
+    report = score_presentation(body_incidents=a.incidents)
+    body = report["categories"]["body_language"]
+    assert body["points"] == 9.25 and body["max_points"] == 10
+    assert report["feedback"][0]["rule"] == "hands_missing"
+
+    report = score_presentation(body_incidents=a.incidents, disabled_alerts={"fast"})
+    body = report["categories"]["body_language"]
+    assert body["points"] == 7.75 and body["max_points"] == 8.5
+
+    report = score_presentation(body_incidents=a.incidents, disabled_alerts={"hands_missing"})
+    body = report["categories"]["body_language"]
+    assert body["points"] == body["max_points"] == 5
+
+    run(a, 2, start=6.1, hands=0)
+    assert a.incidents["hands_missing"] == 1
+    a.process(frame(8.2))
+    run(a, 1.1, start=8.5, hands=0)
+    body = score_presentation(body_incidents=a.incidents)["categories"]["body_language"]
+    assert a.incidents["hands_missing"] == 2 and body["points"] == 8.5
+
+
+def test_hand_visibility_penalty_scales_with_session_length():
+    counts = {"face": 0, "tilt": 0, "look_down": 0, "hands_missing": 1}
+    short = score_presentation(body_incidents=counts, duration_seconds=18)
+    long = score_presentation(body_incidents=counts, duration_seconds=17 * 60)
+    repeated = score_presentation(body_incidents={**counts, "hands_missing": 17}, duration_seconds=17 * 60)
+    assert short["categories"]["body_language"]["deduction"] == 0.75
+    assert long["categories"]["body_language"]["deduction"] == 0.044
+    assert repeated["categories"]["body_language"]["deduction"] == 0.75
+
+
+def test_repeated_body_language_failures_lose_all_credit_for_the_check():
+    report = score_presentation(body_incidents={"look_down": 1, "tilt": 2, "fast": 0},
+                                duration_seconds=600)
+    checks = report["categories"]["body_language"]["checks"]
+    assert checks["look_down"]["deduction"] == 1.125
+    assert checks["tilt"]["deduction"] == 1
+    assert checks["fast"]["deduction"] == 0
 
 
 def test_calibration_countdown_then_rest_circles_and_use_your_hands():
@@ -90,7 +189,7 @@ def test_extra_lines_and_alerts_from_audio_side():
 def rules(**changes):
     """Live alerts settings with defaults, plus {rule_id: {field: value}} changes."""
     base = {r: {"enabled": True, "threshold": None, "duration": d, "cooldown": 0}
-            for r, d in (("tilt", 1.5), ("look_down", 1.0), ("face", 1.0), ("hands_missing", 1.5),
+            for r, d in (("tilt", 1.5), ("look_down", 1.0), ("face", 1.0), ("hands_missing", 1.0),
                          ("still", 10), ("fast", 0.4), ("repeat", 1.0))}
     for rule_id, change in changes.items():
         base[rule_id] = {**base[rule_id], **change}
@@ -101,14 +200,14 @@ def test_disabled_rule_never_shows():
     a = WebcamAnalyzer()
     a.apply_settings(rules(face={"enabled": False}))
     first, _ = run(a, 4, face=lambda t: t < 1)
-    assert "Face the camera" not in first
+    assert "Stay in frame" not in first
 
 
 def test_duration_setting_changes_when_alert_shows():
     a = WebcamAnalyzer()
     a.apply_settings(rules(face={"duration": 2.5}))
     first, _ = run(a, 6, face=lambda t: t < 1)
-    assert first["Face the camera"] == 3.5
+    assert first["Stay in frame"] == 3.5
 
 
 def test_cooldown_keeps_alert_away_after_it_clears():
@@ -119,7 +218,7 @@ def test_cooldown_keeps_alert_away_after_it_clears():
         for i in range(10 * FPS):                     # face disappears for 1.5 s of every 3 s
             t = i / FPS
             state = a.process(frame(t, face=(t % 3) < 1.5))
-            showing = "Face the camera" in state["alerts"]
+            showing = "Stay in frame" in state["alerts"]
             if showing and gone:
                 times.append(round(t, 1))
             gone = not showing
@@ -188,6 +287,23 @@ def test_when_ready_waits_for_face_shoulders_and_hands():
     first_rec = next(t for t, s in states if s["phase"] == "recording")
     assert 3.7 <= first_rec <= 4.0
     assert states[-1][1]["phase"] == "idle" and states[-1][1]["calibrated"]
+
+
+def test_when_ready_skips_hand_calibration_when_visibility_alert_is_disabled():
+    a = WebcamAnalyzer()
+    a.calibrate(0.0, delay=0, duration=3, when_ready=True)
+    assert "show both hands" in a.process(frame(0.0, hands=0))["calibration"]["message"]
+
+    # Restart after cancelling the session that was waiting for hands.
+    a.apply_settings(rules(hands_missing={"enabled": False}))
+    a.calibrate(1.0, delay=0, duration=3, when_ready=True)
+    states = run_states(a, 1.0, 1, hands=0, face=False)
+    assert "show your face" in states[-1][1]["message"]
+    assert "show both hands" not in states[-1][1]["message"]
+    states = run_states(a, 2.0, 5, hands=lambda t: 0 if t < 4 else 2)
+    assert states[-1][1]["calibrated"]
+    assert a.calib.baseline["rest_l"] is None and a.calib.baseline["rest_r"] is None
+    assert "resting hands" not in states[-1][1]["message"]
 
 
 def test_when_ready_waits_for_the_speaker_to_hold_still():

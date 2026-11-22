@@ -25,6 +25,7 @@ from .audio_analysis import AudioAnalyzer
 from .scoring import score_presentation
 from .script_compare import Embedder
 from .transcript import load_moonshine
+from .voice import calibrate_voice, parse_voice_baseline
 from .webcam_analysis import WebcamAnalyzer
 
 log = logging.getLogger("presentation_service")
@@ -117,15 +118,16 @@ async def audio_connection(ws, session):
                 started_at = msg.get("started_at")
                 started_monotonic = time.monotonic()
                 session.scoring_client = ws
-                mode = msg.get("mode")
-                session.webcam.start_scoring(started_at, mode=mode)
-                await run(session.audio.reset)
-                await ws.send(json.dumps({"type": "session_started"}))
+                session.webcam.start_scoring(started_at)
+                await run(session.audio.reset, parse_voice_baseline(msg.get("voice_baseline")))
             elif msg["type"] == "session_end" and session.scoring_client is ws:
                 session.scoring_client = None
                 session.webcam.scoring = False
                 body_incidents = session.webcam.incidents.copy()
                 body_checkpoints = session.webcam.checkpoints.copy()
+                disabled_alerts = {
+                    rule_id for rule_id in session.audio.settings if not session.audio.enabled(rule_id)
+                }
                 # length of the presentation, used by the scorer to scale deductions
                 duration_seconds = msg.get("duration_seconds")
                 if duration_seconds is None and started_monotonic is not None:
@@ -168,7 +170,8 @@ async def audio_connection(ws, session):
                         expected_minutes=(session.audio.target_seconds / 60
                                           if session.audio.target_seconds else None),
                         volume=session.audio.volume_summary(),
-                        script_match=score_script
+                        script_match=session.audio.script_match(),
+                        disabled_alerts=disabled_alerts,
                     )
                     checkpoints = []
                     if started_at is not None:
@@ -209,6 +212,18 @@ async def audio_connection(ws, session):
         log.info("audio client disconnected")
 
 
+async def voice_calibration_connection(ws):
+    async for raw in ws:
+        try:
+            if not isinstance(raw, bytes) or len(raw) % 4:
+                raise ValueError("The microphone sample was incomplete. Try again.")
+            baseline = await asyncio.to_thread(calibrate_voice, np.frombuffer(raw, dtype="<f4"))
+            await ws.send(json.dumps({"baseline": baseline}))
+        except ValueError as error:
+            await ws.send(json.dumps({"error": str(error)}))
+        return
+
+
 async def main(host="127.0.0.1", port=8766):
     # Moonshine runs fully on-device; the first run downloads the model, so it can take a while
     log.info("loading Moonshine model (downloaded on first run)")
@@ -230,6 +245,8 @@ async def main(host="127.0.0.1", port=8766):
             await webcam_connection(ws, session)
         elif path == "/audio":
             await audio_connection(ws, session)
+        elif path == "/voice-calibration":
+            await voice_calibration_connection(ws)
         else:
             await ws.close(4404, f"unknown path {path}")
 

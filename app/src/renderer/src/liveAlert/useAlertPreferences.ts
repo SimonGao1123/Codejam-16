@@ -8,8 +8,11 @@ import {
   type RuleSettings
 } from './ruleDefinitions'
 
-// v2: the rule list now matches the alerts the practice session shows (v1 had 4 voice/posture rules)
-const storageKey = 'presentation-helper:live-alerts:v2'
+const storageKey = 'presentation-helper:live-alerts:v6'
+const handsLegacyStorageKey = 'presentation-helper:live-alerts:v5'
+const lastStorageKey = 'presentation-helper:live-alerts:v4'
+const previousStorageKey = 'presentation-helper:live-alerts:v3'
+const legacyStorageKey = 'presentation-helper:live-alerts:v2'
 
 function defaults(): Preferences {
   return {
@@ -38,7 +41,12 @@ function validThreshold(rule: Rule, threshold: unknown): boolean {
 function readPreferences(): Preferences {
   const preferences = defaults()
   try {
-    const saved = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as Preferences | null
+    const current = localStorage.getItem(storageKey)
+    const handsLegacy = localStorage.getItem(handsLegacyStorageKey)
+    const previous = localStorage.getItem(lastStorageKey) ?? localStorage.getItem(previousStorageKey)
+    const saved = JSON.parse(current ?? handsLegacy ?? previous ?? localStorage.getItem(legacyStorageKey) ?? 'null') as
+      | Preferences
+      | null
     if (saved && styles.some((style) => style.id === saved.style)) {
       preferences.style = saved.style
       for (const rule of rules) {
@@ -58,7 +66,28 @@ function readPreferences(): Preferences {
           entry.cooldown >= 0 &&
           entry.cooldown <= 120
         ) {
-          preferences.rules[rule.id] = entry
+          const settings = { ...entry }
+          if (current === null && rule.id === 'hands_missing' && entry.duration === 1.5) {
+            settings.duration = rule.duration
+          }
+          if (current === null && handsLegacy === null && rule.id === 'pitch') {
+            const oldDefault =
+              (entry.threshold === 4 && entry.duration === 0.1) ||
+              (entry.threshold === 5 && entry.duration === 0.2) ||
+              (previous === null && entry.threshold === 9 && entry.duration === 0.2)
+            if (oldDefault) {
+              settings.threshold = rule.value
+              settings.duration = rule.duration
+            }
+          }
+          if (current === null && handsLegacy === null && previous === null) {
+            if (rule.id === 'volume' && entry.threshold === 8) settings.threshold = rule.value
+            if (rule.id === 'quiet') {
+              if (entry.threshold === 15) settings.threshold = rule.value
+              if (entry.duration === 3) settings.duration = rule.duration
+            }
+          }
+          preferences.rules[rule.id] = settings
         }
       }
     }

@@ -47,9 +47,10 @@ the app sends this as soon as frames are analysed and the service is connected, 
 get-ready countdown. The session itself (`session_start`: timer, recording, audio analysis,
 scoring) only starts once both the countdown and this calibration are done; until then the app
 offers Cancel. With
-`when_ready`, the service **waits** (phase `arming`) until the face, both shoulders and both hands
-are in frame and the speaker holds fairly still (wrists and shoulders barely moving) for 0.75 s,
-then records 3 s of the resting position: shoulder tilt, head pitch, eye gaze, resting hands.
+`when_ready`, the service **waits** (phase `arming`) until the face and both shoulders are in
+frame and the speaker holds fairly still for 0.75 s, then records 3 s of shoulder tilt, head pitch,
+and eye gaze. When **Hands not visible** is enabled at session start, both hands must also be in
+frame and still, and the service records their resting positions.
 While waiting, `calibration.message` says what's missing ("Waiting to calibrate: show both hands,
 hold still"); the overlay shows it large and the status chip under the video repeats it. If the
 speaker leaves the frame or moves for 0.4 s during the recording, it starts over ("Calibration
@@ -73,7 +74,7 @@ Sent when the connection opens and whenever a rule changes on the Live alerts ta
 |---|---|---|
 | `tilt` | Level your shoulders | degrees from calibrated |
 | `look_down` | Look up | degrees of head pitch below calibrated |
-| `face` | Face the camera | — |
+| `face` | Stay in frame | — |
 | `hands_missing` | Show both hands or step back | — |
 | `still` | Use your hands | — |
 | `fast` | Slow your hands | wrist speed, shoulder widths / s |

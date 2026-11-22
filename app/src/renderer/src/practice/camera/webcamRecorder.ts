@@ -44,7 +44,7 @@ export class WebcamRecorder {
   }
 
   /** Stops and finishes writing; resolves with the saved file paths. */
-  async stop(): Promise<{ video: string; data: string; playbackUrl: string } | null> {
+  async stop(): ReturnType<typeof window.api.webcamRecorder.stop> {
     const recorder = this.recorder
     if (!recorder) return null
     this.recorder = null

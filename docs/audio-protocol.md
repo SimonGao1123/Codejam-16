@@ -21,7 +21,7 @@ own rate in an audio worklet. Clients that omit `started_at` send raw samples wi
 **Control** (JSON text):
 
 ```json
-{"type": "session_start", "started_at": 12.3} // recording start on the renderer's monotonic clock
+{"type": "session_start", "started_at": 12.3, "voice_baseline": {"pitch_hz": 168.0, "volume_dbfs": -25.0}}
 {"type": "session_end"}      // finish the sentence still being spoken and return the session score
 ```
 
@@ -56,9 +56,12 @@ slider (default 140). The live pace alert, the average pace alert and the final 
 it, and it's also passed to the scorer as the expected length. Both `script` and `target_time` get
 a `pace_target` reply.
 
-There's no voice calibration: the typical pitch and volume are always the median of the last
-**10 s of speech** (pauses don't count, so a silence doesn't reset it), after the first second.
-The only voice-side measurement at session start is the room's silence level (`noise_floor`).
+The Voice calibration menu sends six seconds of raw 16 kHz mono float32 audio to
+`/voice-calibration` in a single binary message. The service returns `{"baseline": {...}}` using
+the median voiced pitch and volume from that sample, or `{"error": "..."}` if it cannot measure
+enough speech. The app saves the values locally and sends them as `voice_baseline` on each
+`session_start`. They stay fixed throughout practice. A null baseline leaves pitch and volume
+checks unmeasured. The room's silence level (`noise_floor`) is still measured per session.
 
 The app sends both controls for camera-only practice too. Raw audio is optional.
 
@@ -66,12 +69,33 @@ The app sends both controls for camera-only practice too. Raw audio is optional.
 
 ### `session_score`: after the final transcript
 
-Contains `score` (out of `max_score`, currently 28, or null without measured data),
+Contains `score` (out of `max_score`, currently 100, or null without measured data),
 `measured_points` (the available portion of the rubric), `categories` (filler, voice tone, speaking
-pace, and body language breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
+pace, body language, and script accuracy breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
 with a `category`, `label`, and `at` in seconds from recording start). Voice incidents come from the existing voice detector.
 Webcam incidents use the configured hold durations and count each sustained condition once.
-Hiding live banners does not turn off scoring.
+Body language is worth up to 10 rubric points, split evenly between hand checks and the rest.
+When **Hands not visible** is enabled, separate losses of hand visibility lasting one second
+by default cost 0.75 points per incident per minute, up to the remaining points for enabled hand
+checks. Sessions under one minute use one minute for this calculation.
+The first two separate framing failures each deduct up to 2.5 measured body-language points.
+Each failure must last for the configured framing duration, which defaults to one second.
+Other body-language checks lose 75% on the first sustained failure
+and all credit on the second, regardless of session length.
+Voice tone is worth up to 6 rubric points. Pitch swings cost both pitch points on the first
+qualifying violation. The default is 6 semitones from the saved reference for 0.3 seconds,
+allowing short unvoiced gaps between readings. Abrupt octave-like jumps need repeated readings
+before they appear on the graph or count toward an incident.
+Volume spikes and low volume are worth 2 points each, with 75% lost on the first sustained
+failure and all credit lost on the second. Banner cooldowns do not affect incident counts.
+Quiet audio above the speech cutoff can count without a pitch reading. The cutoff uses the
+room measurement, bounded by the saved voice calibration to leave room for quiet speech.
+Below the cutoff, a detectable pitch is required. Short pauses preserve the incident without
+adding to its duration.
+The individual Live alerts toggles at session end determine which checks count. A disabled check
+contributes neither deductions nor available points. **Average pace** controls the average pace
+check, and **Live pace** controls the consistency check. Script accuracy is a combined check and
+is excluded if any of the script alerts are disabled. The Silent display style only hides banners.
 
 Speaking pace is measured from final transcript word timings. Its four points are split equally
 between a moderate average pace and consistency across roughly 20-word samples. The default target
@@ -82,17 +106,21 @@ than eight seconds of active speech leave pace unmeasured.
 
 ```json
 {"type": "voice", "pitch_hz": 182.4, "pitches": [179.8, 182.4], "volume_dbfs": -31.2,
- "typical_hz": 168.0, "spike_hz": 282.5, "speaking": true, "silence_dbfs": -49.9}
+ "pitch_times": [12.45, 12.5], "captured_at": 12.5, "wpm": 140,
+ "typical_hz": 168.0, "typical_volume_dbfs": -25.0, "quiet_limit_dbfs": -33.0, "spike_hz": 237.6,
+ "speaking": true, "silence_dbfs": -49.9}
 ```
 
 `captured_at` gives the latest reading's time on the renderer's monotonic clock, or `null`
-when audio arrives without timestamps. `speaking` is false at the room's noise level (see `noise_floor`); `silence_dbfs` is that level
-(null if the room wasn't measured; the volume graph draws it as "Not speaking below ...").
+when audio arrives without timestamps. `silence_dbfs` is the effective speech cutoff (null if the room
+wasn't measured). Audio below this cutoff can still count as speech if it has a detectable pitch.
+`quiet_limit_dbfs` is the calibrated low-volume threshold shown on the volume graph.
 `pitch_hz` is the latest reading, `null` when the audio isn't voiced (silence, breath, s/t/k
 sounds). `pitches` holds every 50 ms reading since the last message, oldest first; the Voice pitch
-graph plots these. `typical_hz` is the median pitch of the last 10 s of speech (`null` for the first
-second of speech). `spike_hz` is where a pitch-spike alert fires (`typical_hz` raised by the Live
-alerts pitch threshold, in semitones).
+graph plots these. `pitch_times` gives their corresponding capture times, or `null` entries for
+untimed audio. `wpm` is the provisional speaking pace. `typical_hz` and `typical_volume_dbfs`
+are the saved calibration values, or `null` before calibration. `spike_hz` is the upper pitch limit. The lower limit is the same number of
+semitones below `typical_hz`. Crossing either limit for the configured duration triggers the alert.
 
 ### `transcript`: whenever the transcript changes
 
@@ -170,11 +198,12 @@ seconds off script before it fires) and `Move on to the next part` (rule `stuck`
 many times a part's expected speaking time, at least 20 s).
 
 The Live alerts tab's `volume`, `pitch`, `quiet`, `pause` and `filler` rules (sent in the webcam
-side's `settings` message) control these: on/off, threshold (dB above / semitones above / dB below
-normal), minimum duration (for `pause`, how long a pause may be) and cooldown. Fillers are always counted in the transcript; the rule
-only controls the pop-up.
+side's `settings` message) control these: on/off, threshold (dB above / semitones in either
+direction / dB below normal), minimum duration (for `pause`, how long a pause may be), and
+cooldown. Fillers are always counted in the transcript.
 
-The audio side posts alerts that the webcam side adds to its `alerts` banners for 2.5 s:
+The audio side posts alerts for 2.5 s. The webcam side adds them to the overlay, and the
+`voice` message's `alerts` list carries them for audio-only practice:
 `Speak up` (speaking too quietly), `Keep talking` (long pause), `Steady your volume`, `Steady your pitch`, and
 `Filler: um` (etc.) each time a filler is detected. The current voice reading also appears as a
 status line (`voice: 182 Hz  -31 dBFS`).

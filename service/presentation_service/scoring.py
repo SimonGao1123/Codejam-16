@@ -6,17 +6,18 @@ existing live rule IDs. Count a sustained webcam condition once, even if it
 appears in many frames. Use 0 for rules that were measured and never triggered,
 and omit rules that could not be evaluated (e.g. shoulders without calibration).
 
-Scoring is rate-based. Each rule's incidents are converted to incidents per
+Filler scoring is rate-based. Counts are converted to incidents per
 minute, then compared to two thresholds:
 
   * at or below the GOOD rate  -> no deduction (normal, natural speech)
   * at or above the BAD rate   -> the rule's full maximum deduction
   * in between                 -> the deduction rises linearly
 
-So the same mistakes cost less in a long presentation than in a short one.
+Voice and most body-language checks use sustained incident counts directly.
+Hand visibility deductions are based on incidents per minute.
 """
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 
 # Presentations shorter than this are scored as if they were this long, so one
 # slip in a very short clip can't dominate the score.
@@ -28,22 +29,22 @@ FILLER_MAX_POINTS = 6
 # (good rate, bad rate) in fillers per minute
 FILLER_RATES = (2.0, 8.0)
 
-# Rule ID: (good rate/min, bad rate/min, maximum deduction, feedback)
+# Rule ID: (maximum points, fraction lost per sustained incident, feedback)
 VOICE_RULES = {
-    "volume": (1.0, 4.0, 1, "Keep your volume steady and soften sudden loud peaks."),
-    "pitch": (1.0, 4.0, 1, "Vary your tone naturally and smooth out sudden jumps in pitch."),
-    "quiet": (1.0, 4.0, 1, "Project a little more during quiet passages."),
+    "volume": (2, 0.75, "Keep your volume steady and soften sudden loud peaks."),
+    "pitch": (2, 1.0, "Smooth out sudden rises and drops in pitch."),
+    "quiet": (2, 0.75, "Project a little more during quiet passages."),
 }
+# Rule ID: (maximum points, fraction lost per sustained incident, feedback)
 BODY_RULES = {
-    "look_down": (1.0, 5.0, 4, "Bring your eyes back to the calibrated camera position after checking notes."),
-    "face": (0.5, 3.0, 1.5, "Stay in frame and face the camera while speaking."),
-    "hands_missing": (0.5, 3.0, 1.5, "Keep both hands visible so gestures can support your message."),
-    "tilt": (0.5, 3.0, 2, "Keep your shoulders level with your calibrated posture."),
-    "repeat": (1.0, 4.0, 1, "Vary your gestures and avoid repeating the same motion in quick succession."),
-    "still": (0.5, 3.0, 1.5, "Use an occasional purposeful gesture to emphasize a point."),
-    "fast": (1.0, 4.0, 1, "Slow down quick hand movements so each gesture has a clear purpose."),
+    "look_down": (1.5, 0.75, "Bring your eyes back to the calibrated camera position after checking notes."),
+    "face": (2.5, 1.0, "Keep your full face and both shoulders visible throughout the presentation."),
+    "tilt": (1, 0.75, "Keep your shoulders level with your calibrated posture."),
+    "repeat": (1.5, 0.75, "Vary your gestures and avoid repeating the same motion in quick succession."),
+    "still": (2, 0.75, "Use an occasional purposeful gesture to emphasize a point."),
+    "fast": (1.5, 0.75, "Slow down quick hand movements so each gesture has a clear purpose."),
 }
-MAX_SCORE = FILLER_MAX_POINTS + sum(rule[2] for rule in (*VOICE_RULES.values(), *BODY_RULES.values()))
+HAND_CHECKS = ("still", "repeat", "fast")
 PACE_MAX_POINTS = 4
 # Presentation guidance varies with context.  A 140 WPM centre and a 40 WPM
 # comfortable band are sensible defaults; the centre is configurable in the UI.
@@ -59,6 +60,13 @@ SCRIPT_GOOD_MATCH = 0.85
 SCRIPT_BAD_MATCH = 0.5
 
 SCORE_OUT_OF = 100
+
+# Most checks share the live alert's ID. These checks use derived measurements.
+CHECK_ALERTS = {
+    "moderate_pace": ("pace_avg",),
+    "consistent_pace": ("pace",),
+    "script_match": ("off_script", "out_of_order", "stuck"),
+}
 
 
 def _count(value: int) -> int:
@@ -95,25 +103,16 @@ def _category(checks: dict) -> dict:
     }
 
 
-def _incident_category(
-    counts: Mapping[str, int] | None,
-    rules: dict,
-    scoring_minutes: float,
-    length_known: bool,
-) -> dict:
+def _sustained_category(counts: Mapping[str, int] | None, rules: dict) -> dict:
     checks = {}
-    for rule_id, (good, bad, maximum, tip) in rules.items():
+    for rule_id, (maximum, loss_per_incident, tip) in rules.items():
         if counts is None or rule_id not in counts:
             continue
         count = _count(counts[rule_id])
-        rate = count / scoring_minutes
         checks[rule_id] = {
             "count": count,
-            "per_minute": round(rate, 2) if length_known else None,
-            "good_rate": good,
-            "bad_rate": bad,
             "max_points": maximum,
-            "deduction": round(_rate_deduction(rate, good, bad, maximum), 3),
+            "deduction": maximum * min(1, count * loss_per_incident),
             "feedback": tip if count else None,
         }
     return _category(checks)
@@ -200,6 +199,7 @@ def score_presentation(
     expected_minutes: float | None = None,
     script_match: float | None = None,
     volume: Mapping[str, object] | None = None,
+    disabled_alerts: Collection[str] = (),
 ) -> dict:
     """Return a JSON-ready score out of 100, category breakdown, and ordered tips.
 
@@ -220,10 +220,11 @@ def score_presentation(
     FALLBACK_MINUTES is assumed. Lengths under MIN_SCORING_MINUTES are scored
     as MIN_SCORING_MINUTES. The result's scoring_minutes shows the length used.
 
-    The complete rubric allocates 6 points for fillers, 3 for voice tone,
-    4 for speaking pace, 12.5 for body language, and 6 for script accuracy. The score
+    The complete rubric allocates 6 points for fillers, 6 for voice tone,
+    4 for speaking pace, 10 for body language, and 6 for script accuracy. The score
     is the share of the available points kept, scaled to 100. measured_points shows
-    how much of the rubric was evaluated.
+    how much of the rubric was evaluated. Checks tied to disabled alerts are excluded.
+    A second sustained framing failure can deduct another 2.5 measured body-language points.
     With no measured data, score is None.
     """
     minutes = _minutes(duration_seconds)
@@ -250,22 +251,66 @@ def score_presentation(
             "feedback": "Try a short pause instead of filling the silence." if count else None,
         }
 
+    missing_hands = (
+        _count(body_incidents.get("hands_missing", 0))
+        if body_incidents and "hands_missing" not in disabled_alerts
+        else 0
+    )
+    if missing_hands:
+        # Missing hands prevented gesture measurements, but enabled hand checks still count.
+        body_incidents = {**dict.fromkeys(HAND_CHECKS, 0), **body_incidents}
+
     categories = {
         "filler": _category(filler_checks),
-        "voice_tone": _incident_category(voice_incidents, VOICE_RULES, scoring_minutes, length_known),
+        "voice_tone": _sustained_category(voice_incidents, VOICE_RULES),
         "speaking_pace": _pace_category(pace, pace_target_wpm),
-        "body_language": _incident_category(body_incidents, BODY_RULES, scoring_minutes, length_known),
+        "body_language": _sustained_category(body_incidents, BODY_RULES),
         "script_accuracy": _script_category(script_match),
     }
+    if disabled_alerts:
+        categories = {
+            name: _category({
+                check_id: check
+                for check_id, check in category["checks"].items()
+                if not any(alert in disabled_alerts for alert in CHECK_ALERTS.get(check_id, (check_id,)))
+            })
+            for name, category in categories.items()
+        }
+    body = categories["body_language"]
+    missing_hands_deduction = 0
+    if missing_hands:
+        available_hand_points = sum(
+            check["max_points"] - check["deduction"]
+            for key, check in body["checks"].items() if key in HAND_CHECKS
+        )
+        hand_scoring_minutes = max(MIN_SCORING_MINUTES, minutes or MIN_SCORING_MINUTES)
+        missing_hands_deduction = min(
+            round(0.75 * missing_hands / hand_scoring_minutes, 3), available_hand_points
+        )
+        body["points"] -= missing_hands_deduction
+        body["deduction"] += missing_hands_deduction
+    framing = body["checks"].get("face")
+    second_framing_deduction = 0
+    if framing and framing["count"] >= 2:
+        second_framing_deduction = min(body["points"], framing["max_points"])
+        body["points"] -= second_framing_deduction
+        body["deduction"] += second_framing_deduction
+
     measured_points = sum(category["max_points"] for category in categories.values())
     deducted = sum(category["deduction"] for category in categories.values())
     feedback = [
         {"category": category_name, "rule": rule_id, "message": check["feedback"],
-         "deduction": check["deduction"]}
+         "deduction": check["deduction"] + (second_framing_deduction if category_name == "body_language" and rule_id == "face" else 0)}
         for category_name, category in categories.items()
         for rule_id, check in category["checks"].items()
         if check["feedback"] and check["deduction"] > 0
     ]
+    if missing_hands_deduction:
+        feedback.append({
+            "category": "body_language", "rule": "hands_missing",
+            "message": "Keep both hands visible. Frequent losses of hand visibility lower your score.",
+            "deduction": missing_hands_deduction,
+        })
     feedback.sort(key=lambda tip: tip["deduction"], reverse=True)
     return {
         "score": round(SCORE_OUT_OF * (measured_points - deducted) / measured_points, 1)

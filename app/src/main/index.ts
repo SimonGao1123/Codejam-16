@@ -4,7 +4,8 @@ import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { startAnalysisService } from './analysisService'
-import { registerUploadedMediaIpc, registerWebcamRecorderIpc } from './webcamRecorder'
+import { registerPracticeLibraryIpc } from './practiceLibrary'
+import { registerWebcamRecorderIpc } from './webcamRecorder'
 
 // The built UI is served from app://renderer/ instead of file://, because MediaPipe loads its
 // models and WebAssembly with fetch(), which Chromium doesn't allow for file:// URLs.
@@ -68,7 +69,7 @@ app.whenReady().then(async () => {
   })
 
   registerWebcamRecorderIpc()
-  registerUploadedMediaIpc()
+  registerPracticeLibraryIpc()
   serveRenderer()
   // the Python analysis service starts loading its models while the window opens
   const servicePort = await startAnalysisService()
