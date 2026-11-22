@@ -26,9 +26,14 @@ own rate in an audio worklet. Clients that omit `started_at` send raw samples wi
 ```
 
 Uploaded recordings use `"voice_baseline": null, "recording_baseline": true`. The service uses
-the first 1.5 seconds of voiced audio to establish a recording-local pitch and volume reference;
-the rest of the recording is graded for sustained changes relative to that reference. This makes
+the median of all voiced audio to establish a recording-local pitch and volume reference, then
+grades sustained changes relative to that reference. This makes
 the result independent of the file's overall gain and the user's live microphone calibration.
+
+Uploads also send `"mode": "recording"` on `session_start`. This tells the webcam analyzer to
+discard any prior live-session calibration and establish its own opening posture reference. Hand
+speed, busyness and repetition stay shoulder-width-relative; the upload never treats the opening
+hand position as a "hands at rest" calibration.
 
 Upload processing sends `{"type": "audio_sync", "id": 12}` immediately after each binary
 chunk and waits for `{"type": "audio_processed", "id": 12}`. The reply is sent only after

@@ -254,6 +254,7 @@ def test_uploaded_recording_uses_its_own_opening_baseline_and_scores_framing():
     states = run_states(a, 0, 3.2)
     assert states[-1][1]["calibrated"]
     assert abs(a.calib.baseline["tilt"]) < 0.1
+    assert a.calib.baseline["rest_l"] is None and a.calib.baseline["rest_r"] is None
 
     # After calibration, an absent face and hands are body-language incidents, not omitted data.
     run_states(a, 3.2, 4, face=False, hands=0)

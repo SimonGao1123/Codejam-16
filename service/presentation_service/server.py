@@ -120,7 +120,7 @@ async def audio_connection(ws, session):
                 started_at = msg.get("started_at")
                 started_monotonic = time.monotonic()
                 session.scoring_client = ws
-                session.webcam.start_scoring(started_at)
+                session.webcam.start_scoring(started_at, mode=msg.get("mode"))
                 await run(
                     session.audio.reset,
                     parse_voice_baseline(msg.get("voice_baseline")),
@@ -194,7 +194,10 @@ async def audio_connection(ws, session):
                             for when, category, label in sorted(body_checkpoints + session.audio.checkpoints())
                             if when >= started_at
                         ]
-                    return [*messages, {"type": "session_score", **report, "checkpoints": checkpoints}]
+                    final_voice = []
+                    if session.audio.voice.baseline_source == "recording" and session.audio.voice.typical_pitch_hz:
+                        final_voice = [session.audio.voice_message()]
+                    return [*final_voice, *messages, {"type": "session_score", **report, "checkpoints": checkpoints}]
 
                 # for out in await run(finish_and_score):
                 #     await ws.send(json.dumps(out))

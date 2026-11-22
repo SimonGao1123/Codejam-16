@@ -66,7 +66,16 @@ export default function VoiceGraph({
   })
 
   useEffect(() => {
-    linesRef.current = { typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, durationS, live }
+    linesRef.current = {
+      typicalHz,
+      spikeHz,
+      typicalDbfs,
+      quietDbfs,
+      silenceDbfs,
+      desiredWpm,
+      durationS,
+      live
+    }
   }, [typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, durationS, live])
 
   useEffect(() => {
@@ -194,7 +203,8 @@ function render(
   ctx.textBaseline = 'top'
   for (let tick = 0; tick <= 3; tick++) {
     const ago = (windowSeconds * tick) / 3
-    if (fixed) ctx.fillText(`${Number((windowSeconds - ago).toFixed(1))}s`, x(end - ago), bottom + 6)
+    if (fixed)
+      ctx.fillText(`${Number((windowSeconds - ago).toFixed(1))}s`, x(end - ago), bottom + 6)
     else ctx.fillText(tick ? `-${Number(ago.toFixed(1))}s` : 'now', x(end - ago), bottom + 6)
   }
 

@@ -284,6 +284,19 @@ class AudioAnalyzer:
 
     def finish(self):
         """End of session: close the open phrase so its words make it into the transcript."""
+        recording_incidents = self.voice.finalize_recording_baseline()
+        if recording_incidents is not None:
+            self.voice_incidents = dict.fromkeys(("quiet", "volume", "pitch"), 0)
+            labels = {
+                "quiet": VoiceMonitor.QUIET,
+                "volume": VoiceMonitor.VOLUME_SPIKE,
+                "pitch": VoiceMonitor.PITCH_SPIKE,
+            }
+            for block, rule in recording_incidents:
+                self.voice_incidents[rule] += 1
+                onset = self._recording_clock(block * BLOCK_SIZE)
+                if onset is not None:
+                    self.voice_checkpoints.append((onset, "voice_tone", labels[rule]))
         sentences, fillers = [], []
         self.collect(self.transcriber.flush(), sentences, fillers)
         return [self.transcript_message(sentences, fillers, partial="")] + self.check_script(force=True)

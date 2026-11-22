@@ -198,17 +198,16 @@ def test_recording_baseline_uses_the_uploaded_audio_not_live_calibration():
         samples = amplitude * np.sin(2 * np.pi * hz * np.arange(round(SR * seconds)) / SR)
         return [samples[i:i + BLOCK_SIZE] for i in range(0, len(samples), BLOCK_SIZE)]
 
-    # The first 1.5 seconds establish this recording's own normal pitch and level.
+    # The complete voiced recording establishes its own normal pitch and level.
     for block in blocks(200, 0.02, 1.5):
         monitor.process(block, 0)
+    for block in blocks(200, 0.02, 0.5) + blocks(320, 0.2, 0.5):
+        monitor.process(block, 0)
+    incidents = monitor.finalize_recording_baseline()
     assert monitor.typical_pitch_hz == pytest.approx(200, abs=3)
     assert monitor.typical_volume_dbfs == pytest.approx(-37, abs=1)
     assert monitor.baseline_source == "recording"
-
-    # The same quiet recording level is normal; only a sustained change relative to it is flagged.
-    assert not any(monitor.process(block, 0) for block in blocks(200, 0.02, 0.5))
-    alerts = [alert for block in blocks(320, 0.2, 0.5) for alert in monitor.process(block, 0)]
-    assert VoiceMonitor.PITCH_SPIKE in alerts and VoiceMonitor.VOLUME_SPIKE in alerts
+    assert {rule for _, rule in incidents} == {"pitch", "volume"}
 
 
 def test_fillers_are_scored_per_minute():

@@ -12,6 +12,12 @@
   padding: 24px;
 }
 
+/* The shared Script card normally spaces itself below the live controls. In the upload stack,
+   the parent gap supplies that spacing instead. */
+.ph-upload-script {
+  margin-top: 0;
+}
+
 .ph-dropzone {
   border: 2px dashed var(--c-border-strong);
   border-radius: var(--radius);

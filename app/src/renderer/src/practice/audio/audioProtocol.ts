@@ -22,6 +22,7 @@ export type AudioControlMessage =
       started_at: number
       voice_baseline: VoiceBaseline | null
       recording_baseline?: boolean
+      mode?: 'recording'
     }
   | { type: 'session_end' } // practice ended: Python sends the final transcript and score
   | ScriptControlMessage

@@ -392,6 +392,10 @@ class WebcamAnalyzer:
         # while Calibration collects the baseline.
         if mode == "recording":
             self.calib = Calibration()
+            # Wrist speed, busyness and repetition are already shoulder-relative. Unlike live
+            # practice, an uploaded file has no deliberate hands-at-rest pose, so never turn its
+            # opening hand positions into a reference for the stillness check.
+            self.calib.include_hands = False
             self.calib.start(float(started_at) if isinstance(started_at, (int, float)) else self.last_t,
                              delay=0, duration=3)
         self.recording_face_samples = []

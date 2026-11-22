@@ -23,6 +23,10 @@ const EMPTY_FILLERS = Object.fromEntries(FILLER_WORDS.map((word) => [word, 0])) 
 >
 const GRAPH_WINDOW_S = 16
 
+function scriptWordCount(text: string): number {
+  return text.match(/[A-Za-z0-9']+/g)?.length ?? 0
+}
+
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = Math.floor(seconds % 60)
@@ -83,6 +87,14 @@ export default function UploadGrade(): React.JSX.Element {
     avgWpm: averageWpm,
     desiredWpm
   }
+  const sliderPace = preferences.rules.pace?.threshold ?? 140
+  const scriptWords = scriptWordCount(script)
+  const uploadPaceText =
+    scriptWords && targetMinutes
+      ? `Desired pace: ${((scriptWords * 60) / (targetMinutes * 60)).toFixed(0)} WPM (${scriptWords.toLocaleString()} words in ${targetMinutes} min)`
+      : targetMinutes
+        ? `Add a script to set your pace from your time. Until then: ${sliderPace} WPM (Live alerts target pace)`
+        : `Desired pace: ${sliderPace} WPM (Live alerts target pace). Enter your time and a script to pace yourself to finish on time.`
 
   const resetAudioResults = (): void => {
     setAnalysisConnected(false)
@@ -384,7 +396,8 @@ export default function UploadGrade(): React.JSX.Element {
           type: 'session_start',
           started_at: 0.0,
           voice_baseline: null,
-          recording_baseline: true
+          recording_baseline: true,
+          mode: 'recording'
         })
       )
       setAnalysisConnected(true)
@@ -641,72 +654,80 @@ export default function UploadGrade(): React.JSX.Element {
           )}
         </section>
 
-        {/* Script & Target Time Card */}
-        <section className="ph-upload-card" aria-labelledby="ph-upload-script-heading">
+        {/* Matches the live Script card: optional script, PDF actions, and pace guidance. */}
+        <section className="ph-script ph-upload-script" aria-labelledby="ph-upload-script-heading">
           <div className="ph-card-head">
-            <h2 id="ph-upload-script-heading">2. Script & Expected Time (Optional)</h2>
-            <span>{script.trim() ? 'Script attached' : 'Optional · Script tracking'}</span>
+            <h2 id="ph-upload-script-heading">Script</h2>
+            <span>
+              {!script.trim()
+                ? 'Optional · script tracking is off'
+                : processing
+                  ? 'Comparing your recording with the script…'
+                  : 'Script will be compared when you grade'}
+            </span>
           </div>
 
           <div className="ph-script-edit">
             <textarea
-              className="ph-script-input"
-              rows={5}
-              placeholder="Paste your presentation script here, or attach a text PDF below (optional)..."
+              placeholder="Paste your script here, or attach a PDF. Leave it empty to grade without script tracking."
               value={script}
               disabled={processing}
               onChange={(e): void => setScript(e.target.value)}
+              aria-label="Your script"
             />
-            <div className="ph-script-actions" style={{ marginTop: '10px' }}>
+            <div className="ph-script-bar">
               <input
                 ref={pdfInputRef}
                 type="file"
-                accept="application/pdf"
-                style={{ display: 'none' }}
+                accept="application/pdf,.pdf"
+                hidden
                 onChange={handlePdfAttach}
               />
               <button
                 type="button"
-                className="ph-change-file-btn"
+                className="ph-script-button"
                 disabled={processing}
                 onClick={(): void => pdfInputRef.current?.click()}
               >
-                Attach PDF script
+                Attach PDF
               </button>
-              {pdfStatus && (
-                <span style={{ fontSize: '13px', color: 'var(--c-text-2)', marginLeft: '12px' }}>
-                  {pdfStatus}
-                </span>
+              {script && (
+                <button
+                  type="button"
+                  className="ph-script-button"
+                  disabled={processing}
+                  onClick={(): void => {
+                    setScript('')
+                    setPdfStatus(null)
+                  }}
+                >
+                  Clear
+                </button>
               )}
+              {pdfStatus && <span className="ph-webcam-note">{pdfStatus}</span>}
             </div>
+          </div>
 
-            <div style={{ marginTop: '14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <label htmlFor="target-min" style={{ fontSize: '14px', color: 'var(--c-text-2)' }}>
-                Time limit / Target duration (minutes):
-              </label>
+          <div className="ph-script-pace">
+            <label>
+              Time you have
               <input
-                id="target-min"
                 type="number"
                 min="0.5"
                 step="0.5"
-                max="60"
-                style={{
-                  width: '90px',
-                  padding: '6px 10px',
-                  background: 'var(--c-inset)',
-                  border: '1px solid var(--c-border-strong)',
-                  borderRadius: 'var(--radius)',
-                  color: 'var(--c-text)'
-                }}
+                inputMode="decimal"
                 disabled={processing}
                 value={targetMinutes ?? ''}
                 onChange={(e): void => {
                   const val = parseFloat(e.target.value)
                   setTargetMinutes(val > 0 ? val : null)
                 }}
-                placeholder="e.g. 5"
+                placeholder="–"
+                aria-label="Time you have, in minutes"
               />
-            </div>
+              min
+            </label>
+            <span>{uploadPaceText}</span>
           </div>
         </section>
 

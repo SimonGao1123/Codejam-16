@@ -28,10 +28,8 @@ MIN_PITCH_LAG = SAMPLE_RATE // 450
 MAX_PITCH_LAG = SAMPLE_RATE // 70
 PITCH_PEAK_TOLERANCE = 0.02
 HARMONIC_CONFIRM_BLOCKS = 3
-# Uploaded recordings cannot use the user's microphone calibration: codec gain and the recording
-# setup can change the apparent level. Learn a robust reference from the first 1.5 s of voiced
-# recording instead, then judge subsequent changes relative to that recording.
-RECORDING_BASELINE_BLOCKS = 30
+# Require enough voiced material before a recording can receive a tone score.
+RECORDING_MIN_VOICED_BLOCKS = 30  # 1.5 s at 50 ms per block
 
 
 def pitch_hz(samples, *, min_confidence=0.62):
@@ -159,11 +157,11 @@ class VoiceMonitor:
         self.latest_volume_dbfs = None
         self.typical_pitch_hz, self.typical_volume_dbfs = baseline or (None, None)
         self.baseline_source = "calibration" if baseline else ("recording" if recording_baseline else None)
-        self.learn_recording_baseline = recording_baseline and baseline is None
-        self.recording_pitches, self.recording_volumes = [], []
-        if self.learn_recording_baseline:
-            # A recording's gain may be much quieter than the live microphone. Until its own
-            # reference is known, allow pitch detection down to the conservative hard floor.
+        self.recording_baseline = recording_baseline and baseline is None
+        self.recording_measurements = []
+        if self.recording_baseline:
+            # A recording's gain may be much quieter than the live microphone. Its consistency
+            # reference is calculated after the complete file has been measured.
             self.noise_floor_dbfs = QUIET_PITCH_FLOOR_DBFS
         if self.typical_volume_dbfs is not None:
             self.noise_floor_dbfs = min(
@@ -230,24 +228,11 @@ class VoiceMonitor:
         self.speaking = volume >= gate or pitch is not None
         self.latest_pitch_hz = pitch
         self.latest_volume_dbfs = volume
-        if self.learn_recording_baseline and pitch is not None:
-            self.recording_pitches.append(pitch)
-            self.recording_volumes.append(volume)
-            if len(self.recording_pitches) >= RECORDING_BASELINE_BLOCKS:
-                self.typical_pitch_hz = float(median(self.recording_pitches))
-                self.typical_volume_dbfs = float(median(self.recording_volumes))
-                self.learn_recording_baseline = False
-                self.noise_floor_dbfs = min(
-                    self.noise_floor_dbfs,
-                    max(MIN_CALIBRATION_DBFS, self.typical_volume_dbfs - 6),
-                )
         return pitch, volume
 
-    def process(self, samples, elapsed_seconds):
-        """Return alerts for one 50 ms mono audio block: QUIET (speaking too quietly), PAUSE (not
-        speaking for too long), VOLUME_SPIKE (keep your level steady), PITCH_SPIKE (avoid sudden
-        jumps in pitch)."""
-        pitch, volume = self.measure(samples)
+    def _evaluate_measurement(self, pitch, volume, speaking, elapsed_seconds):
+        """Apply the consistency rules to one already-measured 50 ms block."""
+        self.speaking = speaking
         typical_volume = self.typical_volume_dbfs
         typical_pitch = self.typical_pitch_hz
         quiet_limit = self.quiet_limit_dbfs
@@ -282,6 +267,51 @@ class VoiceMonitor:
         if self.pitch_spike.update(pitch_swing, elapsed_seconds):
             alerts.append(self.PITCH_SPIKE)
         return alerts
+
+    def process(self, samples, elapsed_seconds):
+        """Return live alerts for one 50 ms mono audio block."""
+        pitch, volume = self.measure(samples)
+        if self.recording_baseline:
+            # Uploads are graded after the whole file establishes a robust reference. Do not let
+            # an unusually soft or emphatic introduction decide what "normal" means.
+            self.recording_measurements.append((pitch, volume, self.speaking))
+            return []
+        return self._evaluate_measurement(pitch, volume, self.speaking, elapsed_seconds)
+
+    def finalize_recording_baseline(self):
+        """Score an upload against the median pitch and volume of all voiced audio.
+
+        Returns ``None`` when there is not enough voiced material to measure tone, otherwise a
+        list of ``(block_index, rule_id)`` sustained consistency incidents.
+        """
+        if not self.recording_baseline:
+            return None
+        voiced = [(pitch, volume) for pitch, volume, _ in self.recording_measurements if pitch is not None]
+        if len(voiced) < RECORDING_MIN_VOICED_BLOCKS:
+            return None
+        self.typical_pitch_hz = float(median(pitch for pitch, _ in voiced))
+        self.typical_volume_dbfs = float(median(volume for _, volume in voiced))
+
+        # Replay the measured recording through a monitor with the final reference. This preserves
+        # the same duration, gap and direction rules used for live calibration-based grading.
+        reference = VoiceMonitor(
+            quiet_drop_db=self.quiet_drop_db,
+            volume_jump_db=self.volume_jump_db,
+            pitch_jump_semitones=self.pitch_jump_semitones,
+            pause_seconds=self.pause.duration_seconds,
+            baseline=(self.typical_pitch_hz, self.typical_volume_dbfs),
+        )
+        reference.quiet.duration_seconds = self.quiet.duration_seconds
+        reference.volume_spike.duration_seconds = self.volume_spike.duration_seconds
+        reference.pitch_spike.duration_seconds = self.pitch_spike.duration_seconds
+        incidents = []
+        detectors = (("quiet", "quiet"), ("volume", "volume_spike"), ("pitch", "pitch_spike"))
+        for block, (pitch, volume, speaking) in enumerate(self.recording_measurements):
+            reference._evaluate_measurement(pitch, volume, speaking, (block + 1) * BLOCK_SECONDS)
+            for rule, attribute in detectors:
+                if getattr(reference, attribute).new_incident:
+                    incidents.append((block, rule))
+        return incidents
 
     def reset_pending_alerts(self):
         self.quiet.reset()
