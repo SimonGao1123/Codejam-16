@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { PracticeAttempt, PracticeLibrary } from '../main/practiceLibrary'
 import type { SavedRecording } from '../main/webcamRecorder'
@@ -30,6 +30,11 @@ const api = {
     line: (line: string): void => ipcRenderer.send('webcam-recorder:line', line),
     stop: (): Promise<{ id: string; video: string; data: string; playbackUrl: string } | null> =>
       ipcRenderer.invoke('webcam-recorder:stop')
+  },
+  uploadMedia: {
+    register: (file: File): Promise<string> =>
+      ipcRenderer.invoke('uploaded-media:register', webUtils.getPathForFile(file)),
+    release: (url: string): Promise<void> => ipcRenderer.invoke('uploaded-media:release', url)
   }
 }
 

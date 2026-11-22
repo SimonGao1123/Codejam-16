@@ -374,14 +374,26 @@ class WebcamAnalyzer:
                       "fast": self.fast_alert, "repeat": self.repeat_alert}
         self.scoring = False
         self.scoring_started_at = None
+        self.scoring_mode = None
+        self.recording_face_samples = []
         self.incidents = {}
         self.checkpoints = []
         self._incident_since = {}
         self._counted_incidents = set()
 
-    def start_scoring(self, started_at=None):
+    def start_scoring(self, started_at=None, mode=None):
         self.scoring = True
         self.scoring_started_at = started_at
+        self.scoring_mode = mode
+        # An uploaded recording has no interactive "stand still" step. Build an independent
+        # three-second baseline from its opening frames instead of reusing a live session's
+        # calibration (which may belong to another person or camera setup). Scoring is paused
+        # while Calibration collects the baseline.
+        if mode == "recording":
+            self.calib = Calibration()
+            self.calib.start(float(started_at) if isinstance(started_at, (int, float)) else self.last_t,
+                             delay=0, duration=3)
+        self.recording_face_samples = []
         self.motion.clear()
         self.both_seen_at = -math.inf
         self.incidents.clear()
@@ -515,8 +527,12 @@ class WebcamAnalyzer:
         calibrating = self.calib.busy
         hand_points = [points(hand["landmarks"]) for hand in hands]
 
+        # Shoulder-relative hand coordinates only make sense when both shoulders are tracked.
+        # Without that stable reference, omit hand-motion scoring for this frame.
+        shoulders_visible = bool(pose and all(pose[i].visibility > 0.5 for i in (L_SHOULDER, R_SHOULDER)))
+
         # shoulders + hand motion (pose)
-        if pose:
+        if shoulders_visible:
             lm = pose
             tilt, width = shoulder_tilt(lm, w, h)
             if base and shoulders_visible:
@@ -545,7 +561,8 @@ class WebcamAnalyzer:
                 if r:
                     rest_circles.append({"x": round((mx + r[0] * width) / w, 4), "y": round((my + r[1] * width) / h, 4),
                                          "r": round(REST_RADIUS * width / w, 4), "active": bool(at_rest)})
-            # stillness and repetition only count when both hands are actually in view
+            # Score a gesture only when both hands are visible. A single tracked wrist is too
+            # easy to confuse with an arm that has simply left the frame.
             still = both_recent and (self.motion.activity(1.0) < HAND_STILL or at_rest)
             repeating = both_recent and repeat > self.limits["repeat"]
             still_s = now - self.still_alert.bad_since if self.still_alert.bad_since else 0
@@ -568,7 +585,7 @@ class WebcamAnalyzer:
         if face_visible:
             pitch = head_pitch(points(face["landmarks"]), w, h)
             eyes = eyes_down(face["blendshapes"])
-            if base:
+            if base and "pitch" in base:
                 down, eyes_off = pitch - base["pitch"], eyes - base["eyes"]
                 down_bad = down > self.limits["look_down"] or eyes_off > EYES_DOWN_MAX
                 lines.append(line(f"eye level: head {down:+.0f} deg down, eyes down {eyes_off:+.2f}  (vs calibrated)",

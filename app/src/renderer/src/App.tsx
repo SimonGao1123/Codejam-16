@@ -5,6 +5,7 @@ import { loadVoiceCalibration, saveVoiceCalibration } from './calibration/calibr
 import LiveAlerts from './liveAlert/LiveAlerts'
 import MainMenu from './menu/MainMenu'
 import Practice from './practice/Practice'
+import UploadGrade from './upload/UploadGrade'
 import './practice/practice.css'
 
 const emptyLibrary: PracticeLibrary = { folders: [], attempts: [] }
@@ -62,6 +63,10 @@ function App(): React.JSX.Element {
             Practice
           </button>
           <button
+            aria-current={page === 'upload' ? 'page' : undefined}
+            onClick={() => setPage('upload')}
+          >
+            Upload & Grade
             aria-current={page === 'calibration' ? 'page' : undefined}
             disabled={practiceBusy}
             onClick={() => setPage('calibration')}
@@ -103,6 +108,7 @@ function App(): React.JSX.Element {
           />
         )}
       </div>
+      <div hidden={page !== 'upload'}>{page === 'upload' && <UploadGrade />}</div>
       <div hidden={page !== 'alerts'}>{page === 'alerts' && <LiveAlerts />}</div>
       {page === 'calibration' && (
         <VoiceCalibration

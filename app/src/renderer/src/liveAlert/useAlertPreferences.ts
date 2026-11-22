@@ -53,9 +53,10 @@ function readPreferences(): Preferences {
         const savedEntry = saved.rules?.[rule.id]
         // The first pace rule shipped with a hidden 15 s cooldown. It now has a
         // visible, responsive 5 s default, so migrate that old default once.
-        const entry = rule.id === 'pace' && savedEntry?.cooldown === 15
-          ? { ...savedEntry, cooldown: 5 }
-          : savedEntry
+        const entry =
+          rule.id === 'pace' && savedEntry?.cooldown === 15
+            ? { ...savedEntry, cooldown: 5 }
+            : savedEntry
         if (
           entry &&
           typeof entry.enabled === 'boolean' &&

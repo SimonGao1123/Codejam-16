@@ -11,7 +11,10 @@ import { registerWebcamRecorderIpc } from './webcamRecorder'
 // models and WebAssembly with fetch(), which Chromium doesn't allow for file:// URLs.
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
-  { scheme: 'practice-recording', privileges: { standard: true, secure: true, stream: true } }
+  { scheme: 'practice-recording', privileges: { standard: true, secure: true, stream: true } },
+  // Uploaded files use the same range-request playback path as practice recordings. Blob URLs are
+  // renderer-owned and can become unreliable when the analysis preview is replaced by the player.
+  { scheme: 'uploaded-media', privileges: { standard: true, secure: true, stream: true } }
 ])
 
 function serveRenderer(): void {

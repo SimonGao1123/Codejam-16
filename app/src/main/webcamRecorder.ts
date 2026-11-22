@@ -15,6 +15,21 @@ interface Recording {
 }
 
 let current: Recording | null = null
+const uploadedMedia = new Map<string, { path: string; contentType: string }>()
+
+function contentTypeFor(path: string): string {
+  const extension = path.slice(path.lastIndexOf('.') + 1).toLowerCase()
+  return (
+    {
+      mp4: 'video/mp4',
+      webm: 'video/webm',
+      mov: 'video/quicktime',
+      mkv: 'video/x-matroska',
+      wav: 'audio/wav',
+      mp3: 'audio/mpeg',
+      m4a: 'audio/mp4'
+    }[extension] ?? 'application/octet-stream'
+  )
 const recordingName = /^[a-f0-9-]{36}\.webm$/
 const playbackUrl = (name: string): string => `practice-recording://media/${name}`
 const closingVideos = new Set<string>()
@@ -63,7 +78,7 @@ const close = (s: WriteStream): Promise<void> =>
     s.end(resolve)
   })
 
-async function serveRecording(path: string, request: Request): Promise<Response> {
+async function serveMedia(path: string, request: Request, contentType: string): Promise<Response> {
   const file = await stat(path).catch(() => null)
   if (!file?.isFile() || file.size === 0) return new Response(null, { status: 404 })
 
@@ -76,15 +91,47 @@ async function serveRecording(path: string, request: Request): Promise<Response>
   }
 
   const headers = new Headers({
-    'Content-Type': 'video/webm',
+    'Content-Type': contentType,
     'Accept-Ranges': 'bytes',
     'Content-Length': String(end - start + 1)
   })
   if (bounds) headers.set('Content-Range', `bytes ${start}-${end}/${file.size}`)
-  const body = request.method === 'HEAD'
-    ? null
-    : (Readable.toWeb(createReadStream(path, { start, end })) as ReadableStream<Uint8Array>)
+  const body =
+    request.method === 'HEAD'
+      ? null
+      : (Readable.toWeb(createReadStream(path, { start, end })) as ReadableStream<Uint8Array>)
   return new Response(body, { headers, status: bounds ? 206 : 200 })
+}
+
+/**
+ * Gives a user-selected file a capability URL. The renderer never supplies a filesystem path to
+ * the protocol handler, and the URL supports the byte ranges Chromium needs for seeking/replay.
+ */
+export function registerUploadedMediaIpc(): void {
+  protocol.handle('uploaded-media', (request) => {
+    const id = new URL(request.url).hostname
+    const media = uploadedMedia.get(id)
+    if (!media) return new Response('Recording not found', { status: 404 })
+    return serveMedia(media.path, request, media.contentType)
+  })
+
+  ipcMain.handle('uploaded-media:register', async (_, path: string) => {
+    const file = await stat(path).catch(() => null)
+    if (!file?.isFile() || file.size === 0)
+      throw new Error('The selected recording is unavailable.')
+    const id = randomUUID()
+    uploadedMedia.set(id, { path, contentType: contentTypeFor(path) })
+    return `uploaded-media://${id}/recording`
+  })
+
+  ipcMain.handle('uploaded-media:release', (_, url: string) => {
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'uploaded-media:') uploadedMedia.delete(parsed.hostname)
+    } catch {
+      // Releasing a stale URL is harmless.
+    }
+  })
 }
 
 export function registerWebcamRecorderIpc(): void {
@@ -95,7 +142,7 @@ export function registerWebcamRecorderIpc(): void {
     if (url.hostname !== 'media' || !recordingName.test(url.pathname.slice(1))) {
       return new Response('Recording not found', { status: 404 })
     }
-    return serveRecording(join(dir, url.pathname.slice(1)), request)
+    return serveMedia(join(dir, url.pathname.slice(1)), request, 'video/webm')
   })
 
   ipcMain.handle('webcam-recorder:list', async (): Promise<SavedRecording[]> => {

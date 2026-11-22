@@ -19,7 +19,11 @@ export default function SessionResults({
     <section className="ph-results" aria-labelledby="ph-results-heading" aria-live="polite">
       <div className="ph-card-head">
         <h2 id="ph-results-heading">Practice results</h2>
-        {result.score !== null && <strong>{result.score} / {result.max_score}</strong>}
+        {result.score !== null && (
+          <strong>
+            {result.score} / {result.max_score}
+          </strong>
+        )}
       </div>
       {result.score === null ? (
         <p>No score is available. Scoring requires an enabled check with enough practice data.</p>
@@ -36,7 +40,10 @@ export default function SessionResults({
                       ? 'Not measured'
                       : `${breakdown.points} / ${breakdown.max_points}`}
                     {pace?.average_wpm !== undefined && (
-                      <small> · {pace.average_wpm} WPM (target {pace.target_wpm} WPM)</small>
+                      <small>
+                        {' '}
+                        · {pace.average_wpm} WPM (target {pace.target_wpm} WPM)
+                      </small>
                     )}
                   </dd>
                 </div>
