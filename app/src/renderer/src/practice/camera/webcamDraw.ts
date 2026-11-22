@@ -4,13 +4,15 @@
 import type { Style } from '../../liveAlert/ruleDefinitions'
 import type { FrameMessage, OverlayColor, StateMessage } from './webcamProtocol'
 
-// A simplified skeleton, readable at a glance: upper body only (shoulders, elbows, wrists, hips;
-// the face and legs aren't drawn), and each hand as a palm outline plus one line per finger, with
-// dots only at the wrist and fingertips.
+// A simplified skeleton, readable at a glance: the face (eyes, nose, ears), the upper body
+// (shoulders, elbows, wrists, hips; legs aren't drawn), and each hand as a palm outline plus one
+// line per finger, with dots only at the wrist and fingertips.
 const POSE_CONNECTIONS: [number, number][] = [
+  [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8], // nose - eyes - ears
+  [9, 10], // mouth
   [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24]
 ] // prettier-ignore
-const POSE_DOTS = [11, 12, 13, 14, 15, 16, 23, 24]
+const POSE_DOTS = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24] // nose, eyes, ears, body
 const HAND_CONNECTIONS: [number, number][] = [
   [0, 1], [1, 4], // thumb
   [0, 5], [5, 9], [9, 13], [13, 17], [17, 0], // palm

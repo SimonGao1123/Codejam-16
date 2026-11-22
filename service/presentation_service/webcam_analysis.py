@@ -28,7 +28,7 @@ HAND_WRIST, HAND_MIDDLE_MCP = 0, 9                             # hand landmarks
 FOREHEAD, CHIN = 10, 152                                       # face landmarks
 FACE_EDGES = (FOREHEAD, CHIN, 234, 454)
 FRAMING_MARGIN = 0.03
-MIN_FACE_HEIGHT = 0.08
+MIN_FACE_HEIGHT = 0.05        # forehead->chin share of the frame height; smaller = too far away
 
 # Thresholds (guesses - tune on real recordings). Tilt and eye level are deviations from calibration.
 TILT_MAX_DEG = 6            # shoulder tilt this far from calibrated = uneven

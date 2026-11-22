@@ -76,7 +76,7 @@ def test_framing_counts_partial_or_distant_face_and_missing_shoulders():
             if bad_framing == "cropped face":
                 sample["face"]["landmarks"][234][0] = 0.01
             elif bad_framing == "distant face":
-                sample["face"]["landmarks"][152][1] = 0.25
+                sample["face"]["landmarks"][152][1] = 0.23      # face 3% of the frame tall
             else:
                 sample["pose"][11][0] = 0.01
             state = a.process(sample)
