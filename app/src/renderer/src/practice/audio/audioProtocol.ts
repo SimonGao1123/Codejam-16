@@ -45,6 +45,7 @@ export interface VoiceMessage {
   pitch_hz: number | null // null when not voiced (silence, breath)
   pitches: (number | null)[] // every 50 ms reading since the last message, oldest first
   wpm: number | null // provisional WPM from Moonshine's partial words; refreshes every 100 ms
+  pitch_times?: (number | null)[] // capture time for each entry in pitches
   volume_dbfs: number
   typical_hz: number | null // median pitch of the last 10 s of speech (null for the first second)
   spike_hz: number | null // a "Steady your pitch" alert fires above this
@@ -92,11 +93,11 @@ export interface ScriptPositionMessage {
   events: string[] // what just happened, e.g. "Jumped ahead to chunk 7: skipped 4, 5, 6"
 }
 
-type ScoreCategory = 'filler' | 'voice_tone' | 'volume' | 'speaking_pace' | 'body_language'
+type ScoreCategory = 'filler' | 'voice_tone' | 'speaking_pace' | 'body_language' | 'script_accuracy'
 
 export interface PlaybackCheckpoint {
   at: number
-  category: ScoreCategory
+  category: ScoreCategory | 'volume'
   label: string
 }
 
@@ -122,7 +123,6 @@ export interface SessionScoreMessage {
           suspected_count?: number
           average_wpm?: number
           target_wpm?: number
-          margin_db?: number // volume projection: typical speech above the room's noise
         }
       >
     }

@@ -22,6 +22,7 @@ import {
 const NO_FILLERS = Object.fromEntries(FILLER_WORDS.map((w) => [w, 0])) as Record<FillerWord, number>
 const FLASH_MS = 1500 // how long a filler chip stays highlighted after it's counted
 const SCRIPT_DEBOUNCE_MS = 500 // send the script once typing pauses, not on every keystroke
+const SCORE_TIMEOUT_MS = 30_000
 const NOISE_BLOCK = 800 // 50 ms at 16 kHz, the service's voice block
 const MIN_NOISE_BLOCKS = 10 // need at least 0.5 s of the countdown to trust the room level
 const MAX_NOISE_BLOCKS = 60 // the 3 s countdown; waiting for calibration after it doesn't count
@@ -53,6 +54,7 @@ export interface AudioAnalysis {
   desiredWpm: number | null // the pace to aim for, from Python
   desiredSource: PaceSource | null
   paceTarget: PaceTargetMessage | null // latest reply to the script / time the user has
+  finishScoring: () => Promise<SessionScoreMessage | null>
 }
 
 /** `script`: the user's script text; empty = no script (comparison off).
@@ -61,16 +63,15 @@ export function useAudioAnalysis(
   micStream: MediaStream | null,
   script: string,
   targetMinutes: number | null,
-  startedAt: number | null,
-  onScore: (score: SessionScoreMessage | null) => void
+  startedAt: number | null
 ): AudioAnalysis {
   const clientRef = useRef<AudioAnalysisClient | null>(null)
   const pitchRef = useRef<VoiceSample[]>([])
   const volumeRef = useRef<VoiceSample[]>([])
   const wpmRef = useRef<VoiceSample[]>([])
-  const sessionNumber = useRef(0)
   const noiseLevels = useRef<number[]>([]) // dBFS per 50 ms block during the countdown
-  const pendingScores = useRef<number[]>([])
+  const scoringActive = useRef(false)
+  const pendingScores = useRef<((score: SessionScoreMessage | null) => void)[]>([])
   const [connected, setConnected] = useState(false)
   const [sentences, setSentences] = useState<string[]>([])
   const [partial, setPartial] = useState('')
@@ -94,30 +95,32 @@ export function useAudioAnalysis(
 
   useEffect(() => {
     const client = new AudioAnalysisClient()
+    const scoreReplies = pendingScores.current
     clientRef.current = client
     client.setScript(scriptRef.current) // stored now, sent as soon as the socket opens
     client.setTargetTime(targetSecondsRef.current)
     client.onConnectionChange = (online) => {
-      if (!online) pendingScores.current = []
+      if (!online) {
+        scoringActive.current = false
+        scoreReplies.splice(0).forEach((resolve) => resolve(null))
+      }
       setConnected(online)
     }
     client.onMessage = (msg) => {
       if (msg.type === 'voice') {
-        const now = performance.now() / 1000
         setVoice(msg)
-        setWpm(msg.wpm ?? null) // a missing value means no reading, not a crash
-        const wpmTime = msg.captured_at ?? now
-        setWpmUpdatedAt(wpmTime)
-        wpmRef.current.push({ t: wpmTime, value: msg.wpm })
+        const volumeTime = msg.captured_at ?? performance.now() / 1000
+        setWpm(msg.wpm ?? null)
+        setWpmUpdatedAt(volumeTime)
+        wpmRef.current.push({ t: volumeTime, value: msg.wpm ?? null })
         const samples = pitchRef.current
-        // one reading per 50 ms block; the newest is "now"
-        msg.pitches.forEach((value, i) =>
-          samples.push({ t: now - (msg.pitches.length - 1 - i) * 0.05, value })
-        )
-        const volumeTime = msg.captured_at ?? now
+        msg.pitches.forEach((value, i) => {
+          const t = msg.pitch_times?.[i] ?? volumeTime - (msg.pitches.length - 1 - i) * 0.05
+          samples.push({ t, value })
+        })
         const volumes = volumeRef.current
         volumes.push({ t: volumeTime, value: msg.volume_dbfs })
-        while (samples.length && samples[0].t < now - VOICE_WINDOW_S - 1) samples.shift()
+        while (samples.length && samples[0].t < volumeTime - VOICE_WINDOW_S - 1) samples.shift()
         while (volumes.length && volumes[0].t < volumeTime - VOICE_WINDOW_S - 1) volumes.shift()
       } else if (msg.type === 'transcript') {
         applyTranscript(msg)
@@ -131,11 +134,8 @@ export function useAudioAnalysis(
         setPaceTarget(msg)
         setDesiredWpm(msg.desired_wpm)
         setDesiredSource(msg.source)
-      } else if (
-        msg.type === 'session_score' &&
-        pendingScores.current.shift() === sessionNumber.current
-      ) {
-        onScore(msg)
+      } else if (msg.type === 'session_score') {
+        scoreReplies.shift()?.(msg)
       }
     }
     function applyTranscript(msg: TranscriptMessage): void {
@@ -153,10 +153,14 @@ export function useAudioAnalysis(
       }
     }
     return () => {
+      client.onConnectionChange = null
+      client.onMessage = null
       client.close()
       clientRef.current = null
+      scoringActive.current = false
+      scoreReplies.splice(0).forEach((resolve) => resolve(null))
     }
-  }, [onScore])
+  }, [])
 
   // the script: sent once typing pauses (and again after a reconnect, by the client)
   useEffect(() => {
@@ -184,10 +188,7 @@ export function useAudioAnalysis(
   // Send session controls even when practicing with only a camera.
   useEffect(() => {
     const client = clientRef.current
-    if (startedAt === null) return
-    const number = ++sessionNumber.current
-    onScore(null)
-    if (!connected || !client) return
+    if (startedAt === null || !connected || !client) return
     setSentences([])
     setPartial('')
     setFillers(NO_FILLERS)
@@ -208,19 +209,32 @@ export function useAudioAnalysis(
     const noise = noiseLevels.current
     if (noise.length >= MIN_NOISE_BLOCKS) client.send({ type: 'noise_floor', dbfs: median(noise) })
     client.send({ type: 'session_start', started_at: startedAt })
-    return () => {
-      if (!client.connected) return
-      pendingScores.current.push(number)
+    scoringActive.current = true
+  }, [startedAt, connected])
+
+  function finishScoring(): Promise<SessionScoreMessage | null> {
+    const client = clientRef.current
+    if (!scoringActive.current || !client?.connected) return Promise.resolve(null)
+    scoringActive.current = false
+    return new Promise((resolve) => {
+      const timeout = window.setTimeout(() => resolve(null), SCORE_TIMEOUT_MS)
+      // Keep replies in order even when one arrives after its timeout.
+      pendingScores.current.push((score) => {
+        window.clearTimeout(timeout)
+        resolve(score)
+      })
       client.send({ type: 'session_end' })
-    }
-  }, [startedAt, connected, onScore])
+    })
+  }
 
   useEffect(() => {
     const client = clientRef.current
     if (startedAt === null || !connected || !micStream || !client) return
     let stopped = false
     let capture: { stop(): void } | null = null
-    captureMic(micStream, (samples, chunkStart) => client.sendAudio(samples, chunkStart)).then(
+    captureMic(micStream, (samples, chunkStart) => {
+      if (scoringActive.current) client.sendAudio(samples, chunkStart)
+    }).then(
       (c) => (stopped ? c.stop() : (capture = c)),
       (err) => console.error('microphone capture failed', err)
     )
@@ -288,6 +302,7 @@ export function useAudioAnalysis(
     avgWpm,
     desiredWpm,
     desiredSource,
-    paceTarget
+    paceTarget,
+    finishScoring
   }
 }

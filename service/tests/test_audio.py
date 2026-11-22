@@ -4,6 +4,7 @@ import shutil
 import struct
 import subprocess
 import wave
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -82,13 +83,13 @@ def test_fillers_are_scored_per_minute():
     voice = dict.fromkeys(VOICE_RULES, 0)
     body = dict.fromkeys(BODY_RULES, 0)
     # 8 fillers in one minute is at the "bad" rate (8/min): the full 6 filler points are lost.
-    # Pace and volume weren't measured, so the 20 measured points are scaled to the 28-point rubric.
+    # The 20 measured rubric points are scaled to a score out of 100.
     result = score_presentation(filler_counts={"um": 8, "filler?": 5},
                                 voice_incidents=voice, body_incidents=body, duration_seconds=60)
-    assert result["max_score"] == 28
+    assert result["max_score"] == 100
     assert result["measured_points"] == 20
     assert result["categories"]["filler"]["deduction"] == 6
-    assert result["score"] == pytest.approx(28 * 14 / 20)
+    assert result["score"] == pytest.approx(100 * 14 / 20)
     assert result["categories"]["voice_tone"]["max_points"] == 3
     assert result["categories"]["body_language"]["max_points"] == 11
     # the same 8 fillers over 10 minutes is under the "good" rate: nothing lost
@@ -100,8 +101,8 @@ def test_fillers_are_scored_per_minute():
 def test_pace_scores_moderate_delivery_and_consistency():
     steady = score_presentation(pace={"average_wpm": 140, "segment_wpms": [135, 145, 140]})
     assert steady["categories"]["speaking_pace"]["points"] == 4
-    assert steady["max_score"] == 28
-    assert steady["score"] == 28
+    assert steady["max_score"] == 100
+    assert steady["score"] == 100
 
     rushed = score_presentation(pace={"average_wpm": 210, "segment_wpms": [100, 190, 240]})
     checks = rushed["categories"]["speaking_pace"]["checks"]
@@ -164,10 +165,8 @@ def test_out_of_range_pace_posts_the_matching_live_alert(
     assert expected_alert in board.active()
 
 
-def test_session_score_has_recording_relative_checkpoints(stt_model):
-    session = Session(stt_model)
-def test_session_score_has_recording_relative_checkpoints(stt_model):
-    session = Session(stt_model)
+def test_session_score_has_recording_relative_checkpoints():
+    session = Session(Mock())
     session.audio.set_embedder(lambda texts: np.ones((len(texts), 1), dtype=np.float32))
 
     class Client:
@@ -181,8 +180,8 @@ def test_session_score_has_recording_relative_checkpoints(stt_model):
                 session.webcam.process({"t": 50.5 + i / 10, "width": 640, "height": 480})
 
             # Simulate one dropped mic chunk before a filler in the final phrase.
-            yield struct.pack("<d", 51) + np.zeros(SR // 10, dtype="<f4").tobytes()
-            yield struct.pack("<d", 51.6) + np.zeros(3 * SR, dtype="<f4").tobytes()
+            yield struct.pack("<d", 51) + np.zeros(SR // 20, dtype="<f4").tobytes()
+            yield struct.pack("<d", 51.55) + np.zeros(3 * SR, dtype="<f4").tobytes()
             # Moonshine reports a finished line with its start time (seconds of speech audio)
             transcriber = session.audio.transcriber
             transcriber.flush = lambda: (
@@ -198,8 +197,9 @@ def test_session_score_has_recording_relative_checkpoints(stt_model):
     with session.audio_worker:
         asyncio.run(audio_connection(client, session))
     readings = [message for message in client.sent if message["type"] == "voice"]
-    assert readings[0]["captured_at"] == pytest.approx(51.1 - 1 / SR)
+    assert readings[0]["captured_at"] == pytest.approx(51.6 - 1 / SR)
     assert readings[1]["captured_at"] == pytest.approx(51.7 - 1 / SR)
+    assert readings[0]["pitch_times"] == pytest.approx([51.05 - 1 / SR, 51.6 - 1 / SR])
     assert client.sent[0]["type"] == "script_loaded" and client.sent[0]["ready"]
     transcript, script_position, report = client.sent[-3:]
     assert transcript["fillers"]["you know"] == 1
@@ -388,25 +388,18 @@ def test_long_pause_alerts_once_after_the_speaker_starts_talking(stt_model):
     assert "Keep talking" not in board.posted
 
 
-def test_volume_scores_projection_steadiness_and_long_pauses():
-    loud = score_presentation(volume={"speech_dbfs": -30, "segment_dbfs": [-30, -31, -29], "room_dbfs": -64},
-                              voice_incidents={"pause": 0})
-    v = loud["categories"]["volume"]
-    assert v["points"] == 4 and v["max_points"] == 4 and v["checks"]["projection"]["margin_db"] == 34
-
-    # barely above the room, trailing off, and three long pauses
-    weak = score_presentation(volume={"speech_dbfs": -47, "segment_dbfs": [-38, -46, -56], "room_dbfs": -64},
-                              voice_incidents={"pause": 3})
-    checks = weak["categories"]["volume"]["checks"]
-    assert 0 < checks["projection"]["deduction"] < 2          # 17 dB above the room: partial credit
-    assert 0.5 < checks["steady_volume"]["deduction"] < 1      # ~7 dB spread between the parts
-    assert "quieter as you went on" in checks["steady_volume"]["feedback"]
-    assert checks["long_pause"]["deduction"] == 1             # capped
-
-    # no room measurement and under 20 s of speech: only long pauses are scored
-    partial = score_presentation(volume={"speech_dbfs": -30, "segment_dbfs": [-30], "room_dbfs": None},
-                                 voice_incidents={"pause": 0})
-    assert list(partial["categories"]["volume"]["checks"]) == ["long_pause"]
+def test_volume_and_quiet_incidents_are_scored_under_voice_tone():
+    report = score_presentation(
+        voice_incidents={"volume": 4, "quiet": 2, "pitch": 0, "pause": 3},
+        volume={"speech_dbfs": -30, "segment_dbfs": [-30, -31, -29], "room_dbfs": -64},
+        duration_seconds=60,
+    )
+    voice = report["categories"]["voice_tone"]
+    assert voice["max_points"] == 3
+    assert set(voice["checks"]) == {"volume", "quiet", "pitch"}
+    assert voice["checks"]["volume"]["deduction"] == 1
+    assert 0 < voice["checks"]["quiet"]["deduction"] < 1
+    assert voice["checks"]["pitch"]["deduction"] == 0
 
 
 def test_analyzer_volume_summary_from_speech(stt_model):

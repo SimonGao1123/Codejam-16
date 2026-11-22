@@ -33,7 +33,7 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
             {listening && voice
               ? voice.pitch_hz
                 ? `${voice.pitch_hz.toFixed(0)} Hz`
-                : 'Not speaking'
+                : 'No pitch detected'
               : listening
                 ? 'Waiting for audio'
                 : 'Starts with your practice session'}

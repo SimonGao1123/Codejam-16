@@ -3,9 +3,9 @@ import type { SessionScoreMessage } from '../audio/audioProtocol'
 const CATEGORY_LABELS = {
   filler: 'Filler words',
   voice_tone: 'Voice tone',
-  volume: 'Volume',
   speaking_pace: 'Speaking pace',
-  body_language: 'Body language'
+  body_language: 'Body language',
+  script_accuracy: 'Script accuracy'
 } as const
 
 export default function SessionResults({
@@ -26,7 +26,6 @@ export default function SessionResults({
           <dl className="ph-results-breakdown">
             {Object.entries(result.categories).map(([category, breakdown]) => {
               const pace = breakdown.checks.moderate_pace
-              const projection = breakdown.checks.projection
               return (
                 <div key={category}>
                   <dt>{CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS]}</dt>
@@ -37,17 +36,12 @@ export default function SessionResults({
                     {pace?.average_wpm !== undefined && (
                       <small> · {pace.average_wpm} WPM (target {pace.target_wpm} WPM)</small>
                     )}
-                    {projection?.margin_db !== undefined && (
-                      <small> · {projection.margin_db.toFixed(0)} dB above the room</small>
-                    )}
                   </dd>
                 </div>
               )
             })}
           </dl>
-          {result.measured_points < result.max_score && (
-            <p>Score based on {result.measured_points} of {result.max_score} possible rubric points.</p>
-          )}
+          <p>Score based on {result.measured_points} measured rubric points.</p>
           {result.feedback.length > 0 ? (
             <ul>
               {result.feedback.map(({ category, rule, message }) => (

@@ -8,6 +8,7 @@ type Props = {
   preparing: boolean
   countdown: number | null
   saving: boolean
+  finishing: boolean
   finished: boolean
   seconds: number
   camera: boolean
@@ -26,6 +27,7 @@ export default function SessionControls({
   preparing,
   countdown,
   saving,
+  finishing,
   finished,
   seconds,
   camera,
@@ -42,6 +44,7 @@ export default function SessionControls({
   if (running) actionLabel = 'Stop presenting'
   if (preparing) actionLabel = 'Getting ready…'
   if (waitingForCalibration) actionLabel = 'Cancel'
+  if (finishing) actionLabel = 'Finishing practice…'
   if (saving) actionLabel = 'Saving recording…'
 
   return (
@@ -62,7 +65,7 @@ export default function SessionControls({
               ? 'Session duration'
               : 'Elapsed time'}
       </p>
-      <fieldset disabled={running || preparing || saving}>
+      <fieldset disabled={running || preparing || saving || finishing}>
         <legend>Devices</legend>
         <label>
           <input
@@ -89,7 +92,7 @@ export default function SessionControls({
       <button
         className="ph-session-action"
         data-active={running}
-        disabled={(preparing && !waitingForCalibration) || saving}
+        disabled={(preparing && !waitingForCalibration) || saving || finishing}
         onClick={
           running
             ? endPractice

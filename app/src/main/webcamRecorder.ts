@@ -4,17 +4,29 @@
 import { app, ipcMain, protocol } from 'electron'
 import { randomUUID } from 'crypto'
 import { createReadStream, createWriteStream, type WriteStream } from 'fs'
-import { mkdir, stat } from 'fs/promises'
+import { mkdir, readdir, stat } from 'fs/promises'
 import { join } from 'path'
 import { Readable } from 'stream'
 
 interface Recording {
   video: WriteStream
   data: WriteStream
-  paths: { video: string; data: string; playbackUrl: string }
+  paths: { id: string; video: string; data: string; playbackUrl: string }
 }
 
 let current: Recording | null = null
+const recordingName = /^[a-f0-9-]{36}\.webm$/
+const playbackUrl = (name: string): string => `practice-recording://media/${name}`
+
+export interface SavedRecording {
+  id: string
+  savedAt: number
+  playbackUrl: string
+}
+
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
+}
 
 const close = (s: WriteStream): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -54,23 +66,49 @@ export function registerWebcamRecorderIpc(): void {
   const dir = app.isPackaged
     ? join(app.getPath('userData'), 'temp', 'recordings')
     : join(app.getAppPath(), 'temp', 'recordings')
+  const closingVideos = new Set<string>()
 
   protocol.handle('practice-recording', (request) => {
     const url = new URL(request.url)
-    if (url.hostname !== 'media' || !/^\/[a-f0-9-]{36}\.webm$/.test(url.pathname)) {
+    if (url.hostname !== 'media' || !recordingName.test(url.pathname.slice(1))) {
       return new Response('Recording not found', { status: 404 })
     }
     return serveRecording(join(dir, url.pathname.slice(1)), request)
+  })
+
+  ipcMain.handle('webcam-recorder:list', async (): Promise<SavedRecording[]> => {
+    const entries = await readdir(dir, { withFileTypes: true }).catch((error: unknown) => {
+      if (isMissing(error)) return []
+      throw error
+    })
+    const recordings = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile() && recordingName.test(entry.name))
+        .map(async ({ name }) => {
+          const path = join(dir, name)
+          const file = await stat(path).catch((error: unknown) => {
+            if (isMissing(error)) return null
+            throw error
+          })
+          if (!file?.isFile() || !file.size || path === current?.paths.video || closingVideos.has(path)) {
+            return null
+          }
+          return { id: name, savedAt: file.mtimeMs, playbackUrl: playbackUrl(name) }
+        })
+    )
+    return recordings.filter((recording) => recording !== null).sort((a, b) => b.savedAt - a.savedAt)
   })
 
   ipcMain.handle('webcam-recorder:start', async () => {
     if (current) await Promise.all([close(current.video), close(current.data)])
     await mkdir(dir, { recursive: true })
     const base = randomUUID()
+    const id = `${base}.webm`
     const paths = {
-      video: join(dir, `${base}.webm`),
+      id,
+      video: join(dir, id),
       data: join(dir, `${base}.jsonl`),
-      playbackUrl: `practice-recording://media/${base}.webm`
+      playbackUrl: playbackUrl(id)
     }
     const video = createWriteStream(paths.video)
     const data = createWriteStream(paths.data)
@@ -92,8 +130,13 @@ export function registerWebcamRecorderIpc(): void {
   ipcMain.handle('webcam-recorder:stop', async () => {
     if (!current) return null
     const { video, data, paths } = current
+    closingVideos.add(paths.video)
     current = null
-    await Promise.all([close(video), close(data)])
+    try {
+      await Promise.all([close(video), close(data)])
+    } finally {
+      closingVideos.delete(paths.video)
+    }
     return paths
   })
 }

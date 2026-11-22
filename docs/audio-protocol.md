@@ -66,9 +66,9 @@ The app sends both controls for camera-only practice too. Raw audio is optional.
 
 ### `session_score`: after the final transcript
 
-Contains `score` (out of `max_score`, currently 28, or null without measured data),
+Contains `score` (out of `max_score`, currently 100, or null without measured data),
 `measured_points` (the available portion of the rubric), `categories` (filler, voice tone, speaking
-pace, and body language breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
+pace, body language, and script accuracy breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
 with a `category`, `label`, and `at` in seconds from recording start). Voice incidents come from the existing voice detector.
 Webcam incidents use the configured hold durations and count each sustained condition once.
 Hiding live banners does not turn off scoring.
@@ -82,6 +82,7 @@ than eight seconds of active speech leave pace unmeasured.
 
 ```json
 {"type": "voice", "pitch_hz": 182.4, "pitches": [179.8, 182.4], "volume_dbfs": -31.2,
+ "pitch_times": [12.45, 12.5], "captured_at": 12.5, "wpm": 140,
  "typical_hz": 168.0, "spike_hz": 282.5, "speaking": true, "silence_dbfs": -49.9}
 ```
 
@@ -90,7 +91,8 @@ when audio arrives without timestamps. `speaking` is false at the room's noise l
 (null if the room wasn't measured; the volume graph draws it as "Not speaking below ...").
 `pitch_hz` is the latest reading, `null` when the audio isn't voiced (silence, breath, s/t/k
 sounds). `pitches` holds every 50 ms reading since the last message, oldest first; the Voice pitch
-graph plots these. `typical_hz` is the median pitch of the last 10 s of speech (`null` for the first
+graph plots these. `pitch_times` gives their corresponding capture times, or `null` entries for
+untimed audio. `wpm` is the provisional speaking pace. `typical_hz` is the median pitch of the last 10 s of speech (`null` for the first
 second of speech). `spike_hz` is where a pitch-spike alert fires (`typical_hz` raised by the Live
 alerts pitch threshold, in semitones).
 
