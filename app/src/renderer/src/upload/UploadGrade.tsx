@@ -632,6 +632,7 @@ export default function UploadGrade(): React.JSX.Element {
           {fileUrl && (
             <PresentationPlayback
               url={fileUrl}
+              visible
               isVideo={isVideo}
               recordedDuration={
                 mediaDuration > 0

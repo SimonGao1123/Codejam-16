@@ -11,7 +11,7 @@ import './practice/practice.css'
 const emptyLibrary: PracticeLibrary = { folders: [], attempts: [] }
 
 function App(): React.JSX.Element {
-  const [page, setPage] = useState<'menu' | 'practice' | 'alerts' | 'calibration'>('menu')
+  const [page, setPage] = useState<'menu' | 'practice' | 'upload' | 'alerts' | 'calibration'>('menu')
   const [voiceBaseline, setVoiceBaseline] = useState(loadVoiceCalibration)
   const [practice, setPractice] = useState<{ key: number; folderId: string | null } | null>(null)
   const [practiceBusy, setPracticeBusy] = useState(false)
@@ -67,6 +67,8 @@ function App(): React.JSX.Element {
             onClick={() => setPage('upload')}
           >
             Upload & Grade
+          </button>
+          <button
             aria-current={page === 'calibration' ? 'page' : undefined}
             disabled={practiceBusy}
             onClick={() => setPage('calibration')}

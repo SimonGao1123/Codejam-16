@@ -30,6 +30,8 @@ function contentTypeFor(path: string): string {
       m4a: 'audio/mp4'
     }[extension] ?? 'application/octet-stream'
   )
+}
+
 const recordingName = /^[a-f0-9-]{36}\.webm$/
 const playbackUrl = (name: string): string => `practice-recording://media/${name}`
 const closingVideos = new Set<string>()

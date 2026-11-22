@@ -47,10 +47,6 @@ export default function PresentationPlayback({
   useEffect(() => {
     if (!visible) videoRef.current?.pause()
   }, [visible])
-  // Streamed WebM files may not carry duration metadata.
-  const duration =
-    Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : recordedDuration
-  const moments = checkpoints.filter(({ at }) => at >= 0 && at <= duration)
   const markers = new Map<number, PlaybackCheckpoint[]>()
   if (duration > 0) {
     for (const checkpoint of moments) {

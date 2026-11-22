@@ -26,7 +26,7 @@ export interface PracticeSessionState {
   cameraStream: MediaStream | null
   micStream: MediaStream | null
   startPractice: () => Promise<void>
-  endPractice: () => void
+  endPractice: () => ReturnType<WebcamRecorder['stop']>
   cancelPractice: () => void
 }
 
