@@ -307,6 +307,16 @@
   background: var(--c-warn);
   color: var(--c-on-warn);
 }
+.ph-app .ph-session-action:disabled {
+  background: var(--c-raised);
+  color: var(--c-muted);
+  cursor: not-allowed;
+}
+.ph-hint {
+  margin: 0 0 10px;
+  color: var(--c-text-2);
+  font-size: 13px;
+}
 
 .ph-webcam-bar {
   display: flex;

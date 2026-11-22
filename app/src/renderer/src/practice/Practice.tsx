@@ -134,7 +134,9 @@ export default function Practice({
           deviceError={session.deviceError}
           setCamera={session.setCamera}
           setMicrophone={session.setMicrophone}
-          startPractice={() => {
+          startPractice={async () => {
+            // backup guard: the button is already disabled until the voice is calibrated
+            if (!voiceBaseline) return
             setScore(null)
             setScoreUnavailable(false)
             setLibraryError(false)
@@ -143,6 +145,7 @@ export default function Practice({
           endPractice={() => void endPractice()}
           waitingForCalibration={session.waitingForCalibration}
           cancelPractice={session.cancelPractice}
+          voiceCalibrated={voiceBaseline !== null}
         />
       </div>
       <ScriptPanel
