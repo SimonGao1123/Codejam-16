@@ -328,3 +328,15 @@ def test_voice_alerts_show_while_waiting_to_calibrate():
     a.calibrate(0.0, delay=0, duration=3, when_ready=True)
     state = a.process(frame(0.0, hands=0), extra_alerts=["Keep talking"])
     assert state["calibration"]["phase"] == "arming" and state["alerts"] == ["Keep talking"]
+
+
+def test_calibration_state_carries_the_requesting_sessions_id():
+    # a session cancelled mid-calibration, then a new one: "calibrated" must belong to the new id
+    a = WebcamAnalyzer()
+    a.calibrate(0.0, delay=0, duration=3, when_ready=True, id=1)
+    states = run_states(a, 0.0, 2, face=False)
+    assert states[-1][1]["phase"] == "arming" and states[-1][1]["id"] == 1
+    a.calibrate(2.0, delay=0, duration=3, when_ready=True, id=2)     # replaces the running one
+    states = run_states(a, 2.0, 5)
+    done = states[-1][1]
+    assert done["phase"] == "idle" and done["calibrated"] and done["id"] == 2

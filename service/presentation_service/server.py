@@ -83,7 +83,7 @@ async def webcam_connection(ws, session):
             await ws.send(json.dumps(state))
         elif msg["type"] == "calibrate":
             session.webcam.calibrate(msg.get("t"), msg.get("delay"), msg.get("duration"),
-                                     when_ready=bool(msg.get("when_ready")))
+                                     when_ready=bool(msg.get("when_ready")), id=msg.get("id"))
         elif msg["type"] == "settings":
             session.apply_settings(msg["rules"])
     log.info("webcam client disconnected")

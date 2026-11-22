@@ -1,0 +1,41 @@
+/* Colloquia theme: blue on black and dark gray, flat surfaces, small corners.
+   Every stylesheet uses these tokens instead of raw colors. */
+:root {
+  /* surfaces, darkest to lightest */
+  --c-bg: #0b0c0e; /* app background, navigation rail */
+  --c-page: #141517; /* page area */
+  --c-inset: #0f1012; /* inputs, video wells, sunken areas */
+  --c-card: #1b1c20; /* cards and panels */
+  --c-raised: #26282d; /* hover, selected rows, chips */
+  --c-border: #2a2c31;
+  --c-border-strong: #3a3d44; /* input outlines */
+
+  /* text */
+  --c-text: #edeef0;
+  --c-text-2: #b5b9c2; /* secondary */
+  --c-muted: #9ea2ab; /* labels, captions (4.5:1 on cards) */
+
+  /* accent */
+  --c-accent: #3b6ef6;
+  --c-accent-hover: #2f5bd8;
+  --c-accent-text: #7c9dff; /* accent-colored text and focus rings on dark */
+  --c-accent-text-hover: #a3bbff;
+  --c-accent-bg: #1d2440; /* tinted selection */
+  --c-on-accent: #ffffff;
+
+  /* status */
+  --c-warn: #f0b232;
+  --c-on-warn: #1a1305;
+  --c-warn-text: #f7d27a;
+  --c-warn-bg: #3a2e12;
+  --c-ok: #7ee2a0;
+  --c-ok-bg: #1e3a27;
+  --c-danger: #c62f31;
+  --c-danger-text: #ff9ea1;
+  --c-danger-border: #8a3a3d;
+
+  --radius: 4px; /* buttons, inputs, chips */
+  --radius-lg: 6px; /* cards, panels */
+  --font: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}

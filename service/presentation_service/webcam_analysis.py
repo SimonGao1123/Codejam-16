@@ -272,6 +272,7 @@ class Calibration:
         self.begins = None            # recording starts at this time (after the get-into-position pause)
         self.until = None             # recording ends at this time
         self.armed = None             # recording length, while waiting for the speaker to be ready
+        self.id = None                # the app's id for the calibration in progress / last finished
         self.samples = {}
         self.include_hands = True
         self.message = "Calibrates when the session starts"
@@ -340,7 +341,7 @@ class Calibration:
             self.message = f"Calibrating - stand still in your resting position{hands_hint}, look at the camera"
         remaining = self.begins - now if phase == "waiting" else self.until - now if phase == "recording" else 0
         return {"phase": phase, "remaining": round(max(remaining, 0), 2),
-                "calibrated": self.baseline is not None, "message": self.message}
+                "calibrated": self.baseline is not None, "message": self.message, "id": self.id}
 
 
 def line(text, color="white"):
@@ -415,13 +416,16 @@ class WebcamAnalyzer:
                 # the repeat slider is a percentage; the score is 0-1
                 self.limits[rule_id] = s["threshold"] / 100 if rule_id == "repeat" else float(s["threshold"])
 
-    def calibrate(self, t=None, delay=None, duration=None, when_ready=False):
+    def calibrate(self, t=None, delay=None, duration=None, when_ready=False, id=None):
         """Start calibration. Timed by the frames that follow; `t` defaults to the last frame's time.
         delay / duration: get-into-position pause and recording length (None = the defaults).
         when_ready: wait until the speaker is in frame and still. Hands are required only when
-        the hands visibility setting is on at the start of calibration."""
+        the hands visibility setting is on at the start of calibration.
+        id: the app's id for this calibration, echoed in `calibration.id`, so the app can tell that
+        "calibrated" belongs to this session and not an earlier one."""
         if self.calib.busy and not when_ready:
             return
+        self.calib.id = id
         self.calib.include_hands = self.missing_alert.enabled
         duration = CALIBRATE_S if duration is None else duration
         if when_ready:

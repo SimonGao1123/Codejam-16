@@ -44,6 +44,7 @@ export interface CalibrateMessage {
   delay?: number // seconds before recording (default 2); 0 for the automatic one at session start
   duration?: number // seconds of recording (default 2)
   when_ready?: boolean // wait until the face, shoulders and both hands are in frame and still
+  id?: number // echoed in CalibrationState.id, so the app knows which calibration finished
 }
 
 export interface SettingsMessage {
@@ -82,6 +83,7 @@ export interface CalibrationState {
   remaining: number // seconds left in the current phase (0 when idle)
   calibrated: boolean
   message: string
+  id?: number | null // the `calibrate` message's id for this calibration
 }
 
 export interface StateMessage {

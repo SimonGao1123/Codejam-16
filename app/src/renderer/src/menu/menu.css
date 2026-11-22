@@ -13,8 +13,7 @@
   margin-bottom: 18px;
 }
 
-.ph-menu-folder-controls,
-.ph-menu-folder-controls form {
+.ph-menu-folder-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: end;
@@ -31,7 +30,7 @@
   gap: 4px;
   width: fit-content;
   max-width: 100%;
-  color: #d8cfee;
+  color: var(--c-text);
   font-size: 13px;
 }
 
@@ -40,10 +39,10 @@
   max-width: 100%;
   min-height: 36px;
   padding: 6px 10px;
-  border: 1px solid #51466f;
-  border-radius: 8px;
-  background: #242437;
-  color: #f2f0fa;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius);
+  background: var(--c-raised);
+  color: var(--c-text);
   font: inherit;
 }
 
@@ -56,8 +55,8 @@
 }
 
 .ph-app .ph-menu-delete {
-  border-color: #a8687a;
-  color: #ffc8d3;
+  border-color: var(--c-danger-border);
+  color: var(--c-danger-text);
 }
 
 .ph-progress-chart {
@@ -75,7 +74,7 @@
   justify-content: space-between;
   height: calc(var(--track-height) + 16px);
   margin-top: -8px;
-  color: #c4bfda;
+  color: var(--c-text-2);
   font-size: 11px;
   text-align: right;
 }
@@ -89,14 +88,16 @@
   padding: 0 8px;
   list-style: none;
   background:
-    linear-gradient(#504660, #504660) 0 0 / 100% 1px no-repeat,
-    linear-gradient(#504660, #504660) 0 calc(var(--track-height) / 2) / 100% 1px no-repeat,
-    linear-gradient(#504660, #504660) 0 calc(var(--track-height) - 1px) / 100% 1px no-repeat;
+    linear-gradient(var(--c-border-strong), var(--c-border-strong)) 0 0 / 100% 1px no-repeat,
+    linear-gradient(var(--c-border-strong), var(--c-border-strong)) 0
+      calc(var(--track-height) / 2) / 100% 1px no-repeat,
+    linear-gradient(var(--c-border-strong), var(--c-border-strong)) 0
+      calc(var(--track-height) - 1px) / 100% 1px no-repeat;
 }
 
 .ph-progress-chart li {
   flex: 0 0 clamp(55px, 8.5vw, 84px);
-  color: #c4bfda;
+  color: var(--c-text-2);
   font-size: 12px;
   text-align: center;
 }
@@ -112,8 +113,8 @@
 .ph-progress-bar {
   position: relative;
   width: 60%;
-  border-radius: 5px 5px 0 0;
-  background: #bda8ff;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--c-accent);
 }
 
 .ph-progress-bar span {
@@ -121,7 +122,7 @@
   bottom: 100%;
   left: 50%;
   transform: translateX(-50%);
-  color: #f2f0fa;
+  color: var(--c-text);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -138,14 +139,14 @@
 
 .ph-menu-card {
   overflow: hidden;
-  border: 1px solid #38334e;
-  border-radius: 16px;
-  background: #1e2030;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  background: var(--c-card);
 }
 
 .ph-menu-card p {
   margin: 0 16px 16px;
-  color: #c4bfda;
+  color: var(--c-text-2);
 }
 
 .ph-menu-card video {
@@ -153,8 +154,8 @@
   width: calc(100% - 32px);
   max-height: 55vh;
   margin: 0 16px 16px;
-  border-radius: 8px;
-  background: #12121d;
+  border-radius: var(--radius);
+  background: var(--c-bg);
 }
 
 .ph-menu-recording-list {
@@ -173,21 +174,21 @@
   gap: 4px 12px;
   width: 100%;
   padding: 9px 12px;
-  border: 1px solid #38334e;
-  border-radius: 8px;
-  background: #242437;
-  color: #f2f0fa;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  background: var(--c-raised);
+  color: var(--c-text);
   text-align: left;
 }
 
 .ph-menu-recording-list button:hover,
 .ph-menu-recording-list button[aria-pressed='true'] {
-  border-color: #a693dc;
-  background: #382e50;
+  border-color: var(--c-accent);
+  background: var(--c-raised);
 }
 
 .ph-menu-recording-list span {
-  color: #d8c9ff;
+  color: var(--c-accent-text-hover);
   font-size: 0.9em;
 }
 
@@ -195,4 +196,122 @@
   .ph-menu-recordings[data-selected='true'] {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* + button (bottom right of Home) and its New folder dialog */
+.ph-app .ph-fab {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 10;
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--c-accent);
+  color: var(--c-on-accent);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+}
+.ph-app .ph-fab:hover:not(:disabled) {
+  background: var(--c-accent-hover);
+}
+.ph-app .ph-fab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ph-fab svg {
+  width: 24px;
+  height: 24px;
+}
+
+.ph-dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  background: var(--c-card);
+  color: var(--c-text);
+  font-family: var(--font);
+}
+.ph-dialog::backdrop {
+  background: rgb(0 0 0 / 65%);
+}
+.ph-dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+.ph-dialog h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.ph-dialog p {
+  margin: -8px 0 0;
+  color: var(--c-muted);
+  font-size: 14px;
+}
+.ph-dialog-field {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-text-2);
+}
+.ph-dialog-field input {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius);
+  background: var(--c-inset);
+  color: var(--c-text);
+  font: 15px var(--font);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.ph-dialog-field input:focus {
+  border-color: var(--c-accent);
+  outline: none;
+}
+.ph-dialog .ph-dialog-error {
+  margin: -4px 0 0;
+  color: var(--c-danger-text);
+}
+.ph-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 6px -20px -20px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--c-border);
+  background: var(--c-page);
+}
+.ph-dialog-actions button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius);
+  font-weight: 600;
+}
+.ph-dialog-cancel {
+  background: transparent;
+  color: var(--c-text);
+}
+.ph-dialog-cancel:hover {
+  text-decoration: underline;
+}
+.ph-dialog-submit {
+  background: var(--c-accent);
+  color: var(--c-on-accent);
+}
+.ph-dialog-submit:hover:not(:disabled) {
+  background: var(--c-accent-hover);
+}
+.ph-dialog-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

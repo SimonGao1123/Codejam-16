@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PracticeAttempt, PracticeLibrary } from '../../../main/practiceLibrary'
 import type { SavedRecording } from '../../../main/webcamRecorder'
 import FolderSelect from './FolderSelect'
@@ -39,6 +39,8 @@ export default function MainMenu({
   const [folderName, setFolderName] = useState('')
   const [changingLibrary, setChangingLibrary] = useState(false)
   const [folderError, setFolderError] = useState('')
+  const [createError, setCreateError] = useState('') // shown in the New folder dialog
+  const newFolderDialog = useRef<HTMLDialogElement>(null)
   const recordingsById = new Map(
     recordings
       ?.filter(({ id }) => !deletedIds.includes(id))
@@ -86,11 +88,11 @@ export default function MainMenu({
       name.toLowerCase() === 'unfiled' ||
       library.folders.some((folder) => folder.name.toLowerCase() === name.toLowerCase())
     ) {
-      setFolderError('A folder with that name already exists.')
+      setCreateError('A folder with that name already exists.')
       return
     }
     setChangingLibrary(true)
-    setFolderError('')
+    setCreateError('')
     try {
       const updated = await window.api.practiceLibrary.createFolder(name)
       onLibraryChange(updated)
@@ -98,9 +100,10 @@ export default function MainMenu({
       if (created) onFolderChange(created.id)
       setFolderName('')
       setSelectedId(null)
+      newFolderDialog.current?.close()
     } catch (error) {
       console.error(error)
-      setFolderError('Couldn’t create the folder.')
+      setCreateError('Couldn’t create the folder.')
     } finally {
       setChangingLibrary(false)
     }
@@ -111,7 +114,9 @@ export default function MainMenu({
     setFolderError('')
     try {
       const { id, completedAt } = attempt
-      onLibraryChange(await window.api.practiceLibrary.moveAttempt({ id, completedAt }, destination))
+      onLibraryChange(
+        await window.api.practiceLibrary.moveAttempt({ id, completedAt }, destination)
+      )
       setSelectedId(null)
     } catch (error) {
       console.error(error)
@@ -172,25 +177,6 @@ export default function MainMenu({
               setFolderError('')
             }}
           />
-          <form onSubmit={(event) => void createFolder(event)}>
-            <label className="ph-folder-select">
-              New folder name
-              <input
-                required
-                maxLength={80}
-                value={folderName}
-                onChange={(event) => setFolderName(event.target.value)}
-                disabled={changingLibrary || libraryLoading || libraryError}
-              />
-            </label>
-            <button
-              type="submit"
-              className="ph-script-button"
-              disabled={!folderName.trim() || changingLibrary || libraryLoading || libraryError}
-            >
-              Create folder
-            </button>
-          </form>
         </div>
         {libraryLoading && <p role="status">Loading practice folders…</p>}
         {libraryError && <p role="status">Couldn’t load practice folders.</p>}
@@ -277,6 +263,79 @@ export default function MainMenu({
           </section>
         )}
       </div>
+      <button
+        type="button"
+        className="ph-fab"
+        aria-label="New folder"
+        title="New folder"
+        disabled={libraryLoading || libraryError}
+        onClick={() => {
+          setFolderName('')
+          setCreateError('')
+          newFolderDialog.current?.showModal()
+        }}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+      <dialog
+        ref={newFolderDialog}
+        className="ph-dialog"
+        aria-labelledby="ph-new-folder-heading"
+        onClick={(event) => {
+          // a click on the backdrop (outside the box) closes it
+          if (event.target === event.currentTarget) event.currentTarget.close()
+        }}
+      >
+        <form onSubmit={(event) => void createFolder(event)}>
+          <h2 id="ph-new-folder-heading">New folder</h2>
+          <p>Group practice runs of the same presentation.</p>
+          <label className="ph-dialog-field">
+            Folder name
+            <input
+              required
+              autoFocus
+              maxLength={80}
+              value={folderName}
+              placeholder="e.g. Q3 review deck"
+              onChange={(event) => {
+                setFolderName(event.target.value)
+                setCreateError('')
+              }}
+              disabled={changingLibrary}
+            />
+          </label>
+          {createError && (
+            <p className="ph-dialog-error" role="alert">
+              {createError}
+            </p>
+          )}
+          <div className="ph-dialog-actions">
+            <button
+              type="button"
+              className="ph-dialog-cancel"
+              onClick={() => newFolderDialog.current?.close()}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="ph-dialog-submit"
+              disabled={!folderName.trim() || changingLibrary}
+            >
+              Create folder
+            </button>
+          </div>
+        </form>
+      </dialog>
     </main>
   )
 }

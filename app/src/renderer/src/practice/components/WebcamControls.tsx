@@ -15,6 +15,8 @@ type Props = {
 
 // Record 3 s once the speaker is in frame and still. The service decides whether hands are required.
 const SESSION_CALIBRATION = { delay: 0, duration: 3, when_ready: true }
+// unique across sessions and remounts of this component (a remount must not match an old id)
+let nextCalibrationId = Date.now()
 
 function calibrationText(cal: WebcamStatus['calibration'], sessionOn: boolean): string {
   if (!sessionOn) return 'Calibrates when you start'
@@ -36,23 +38,27 @@ export default function WebcamControls({
 
   // start of each session: calibrate as soon as frames are being analysed and Python is connected
   const calibratedStream = useRef<MediaStream | null>(null)
-  const sawCalibrating = useRef(false)
+  const sentId = useRef<number | null>(null) // this session's calibration id, echoed by Python
   useEffect(() => {
     if (!cameraStream || !status.ready || !status.connected) return
     if (calibratedStream.current === cameraStream) return
     calibratedStream.current = cameraStream
-    sawCalibrating.current = false
-    webcam.current?.send({ type: 'calibrate', t: performance.now() / 1000, ...SESSION_CALIBRATION })
+    sentId.current = nextCalibrationId++
+    webcam.current?.send({
+      type: 'calibrate',
+      t: performance.now() / 1000,
+      id: sentId.current,
+      ...SESSION_CALIBRATION
+    })
   }, [cameraStream, status.ready, status.connected, webcam])
 
-  // done = this session's calibration was seen running and has since finished (not a leftover
-  // "calibrated" state from the previous session)
-  const calibrated = Boolean(cal?.calibrated)
+  // done = Python reports THIS session's calibration (by id) finished, never a leftover
+  // "calibrated" from an earlier session or a calibration it replaced
+  const { id: calId, phase, calibrated } = cal ?? { id: null, phase: null, calibrated: false }
   useEffect(() => {
-    if (!cameraStream || calibratedStream.current !== cameraStream) return onCalibrated(false)
-    if (busy) sawCalibrating.current = true
-    onCalibrated(sawCalibrating.current && !busy && calibrated)
-  }, [cameraStream, busy, calibrated, onCalibrated])
+    const ours = Boolean(cameraStream) && calibratedStream.current === cameraStream
+    onCalibrated(ours && calId === sentId.current && phase === 'idle' && calibrated)
+  }, [cameraStream, calId, phase, calibrated, onCalibrated])
 
   return (
     <div className="ph-webcam-bar">
