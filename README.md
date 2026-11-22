@@ -1,4 +1,5 @@
-# Presentation Helper (Codejam-16)
+# Colloquia (Codejam-16)
+<img width="240" height="54" alt="image" src="https://github.com/user-attachments/assets/ca2489a8-96cf-4e5c-a366-3278a8e271a3" />
 
 A desktop app for rehearsing presentations. While you practise, it watches your posture, eye
 level and hands through the webcam, listens to your voice, transcribes what you say, counts filler
