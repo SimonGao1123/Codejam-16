@@ -14,6 +14,7 @@ export interface PracticeAttempt {
   folderId: string | null
   completedAt: number
   score: { points: number; maximum: number; measured: number } | null
+  name?: string // set by the user; shown instead of the date
 }
 
 export interface PracticeLibrary {
@@ -35,7 +36,9 @@ export function registerPracticeLibraryIpc(): void {
     }
   }
 
-  function update(change: (library: PracticeLibrary) => void | Promise<void>): Promise<PracticeLibrary> {
+  function update(
+    change: (library: PracticeLibrary) => void | Promise<void>
+  ): Promise<PracticeLibrary> {
     const result = pendingWrite.then(async () => {
       const library = await read()
       await change(library)
@@ -48,6 +51,21 @@ export function registerPracticeLibraryIpc(): void {
       () => undefined
     )
     return result
+  }
+
+  /** A folder name that's not empty, at most 80 characters, and not taken (case-insensitive;
+   *  "Unfiled" is reserved). `except`: the folder being renamed may keep its own name. */
+  function validFolderName(library: PracticeLibrary, name: string, except?: string): string {
+    const trimmed = typeof name === 'string' ? name.trim() : ''
+    if (!trimmed || trimmed.length > 80) throw new Error('Invalid folder name.')
+    const normalized = trimmed.toLowerCase()
+    if (
+      normalized === 'unfiled' ||
+      library.folders.some((f) => f.id !== except && f.name.toLowerCase() === normalized)
+    ) {
+      throw new Error('A folder with that name already exists.')
+    }
+    return trimmed
   }
 
   function checkFolder(library: PracticeLibrary, folderId: string | null): void {
@@ -66,17 +84,47 @@ export function registerPracticeLibraryIpc(): void {
   })
   ipcMain.handle('practice-library:create-folder', (_, name: string) =>
     update((library) => {
-      const trimmed = name.trim()
-      if (!trimmed || trimmed.length > 80) throw new Error('Invalid folder name.')
-      const normalized = trimmed.toLowerCase()
-      if (
-        normalized === 'unfiled' ||
-        library.folders.some((folder) => folder.name.toLowerCase() === normalized)
-      ) {
-        throw new Error('A folder with that name already exists.')
-      }
-      library.folders.push({ id: randomUUID(), name: trimmed })
+      library.folders.push({ id: randomUUID(), name: validFolderName(library, name) })
     })
+  )
+  ipcMain.handle('practice-library:rename-folder', (_, id: string, name: string) =>
+    update((library) => {
+      const folder = library.folders.find((f) => f.id === id)
+      if (!folder) throw new Error('Practice folder does not exist.')
+      folder.name = validFolderName(library, name, id)
+    })
+  )
+  // deleteAttempts: also delete the folder's attempts (recordings and scores); otherwise they move
+  // to Unfiled
+  ipcMain.handle('practice-library:delete-folder', (_, id: string, deleteAttempts: boolean) =>
+    update(async (library) => {
+      checkFolder(library, id)
+      const inFolder = library.attempts.filter((attempt) => attempt.folderId === id)
+      if (deleteAttempts) {
+        for (const attempt of inFolder)
+          if (attempt.id.endsWith('.webm')) await deleteSavedRecording(attempt.id)
+        library.attempts = library.attempts.filter((attempt) => attempt.folderId !== id)
+      } else {
+        for (const attempt of inFolder) attempt.folderId = null
+      }
+      library.folders = library.folders.filter((folder) => folder.id !== id)
+    })
+  )
+  // name: empty clears it (the attempt is shown by its date again)
+  ipcMain.handle(
+    'practice-library:rename-attempt',
+    (_, entry: Pick<PracticeAttempt, 'id' | 'completedAt'>, name: string) =>
+      update((library) => {
+        const trimmed = typeof name === 'string' ? name.trim().slice(0, 80) : ''
+        let attempt = library.attempts.find(({ id }) => id === entry.id)
+        if (!attempt) {
+          // a recording that was never scored has no entry yet
+          attempt = { ...entry, folderId: null, score: null }
+          library.attempts.push(attempt)
+        }
+        if (trimmed) attempt.name = trimmed
+        else delete attempt.name
+      })
   )
   ipcMain.handle('practice-library:save-attempt', (_, attempt: PracticeAttempt) =>
     update((library) => {

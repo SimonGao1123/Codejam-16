@@ -39,8 +39,13 @@ export default function MainMenu({
   const [folderName, setFolderName] = useState('')
   const [changingLibrary, setChangingLibrary] = useState(false)
   const [folderError, setFolderError] = useState('')
-  const [createError, setCreateError] = useState('') // shown in the New folder dialog
+  const [createError, setCreateError] = useState('') // shown in the name dialog
+  // one dialog for typing a name: a new folder, renaming the current folder, renaming an attempt
+  const [nameMode, setNameMode] = useState<'create' | 'renameFolder' | 'renameAttempt'>('create')
   const newFolderDialog = useRef<HTMLDialogElement>(null)
+  const deleteFolderDialog = useRef<HTMLDialogElement>(null)
+  const currentFolder = library.folders.find((folder) => folder.id === folderId) ?? null
+  const currentFolderAttempts = library.attempts.filter((attempt) => attempt.folderId === folderId)
   const recordingsById = new Map(
     recordings
       ?.filter(({ id }) => !deletedIds.includes(id))
@@ -80,13 +85,24 @@ export default function MainMenu({
     }
   }, [practiceBusy])
 
-  async function createFolder(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+  function openNameDialog(mode: typeof nameMode, initial = ''): void {
+    setNameMode(mode)
+    setFolderName(initial)
+    setCreateError('')
+    newFolderDialog.current?.showModal()
+  }
+
+  async function submitName(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     const name = folderName.trim()
-    if (!name || changingLibrary) return
+    if (changingLibrary || (!name && nameMode !== 'renameAttempt')) return
+    const renaming = nameMode === 'renameFolder' ? folderId : null
     if (
-      name.toLowerCase() === 'unfiled' ||
-      library.folders.some((folder) => folder.name.toLowerCase() === name.toLowerCase())
+      nameMode !== 'renameAttempt' &&
+      (name.toLowerCase() === 'unfiled' ||
+        library.folders.some(
+          (folder) => folder.id !== renaming && folder.name.toLowerCase() === name.toLowerCase()
+        ))
     ) {
       setCreateError('A folder with that name already exists.')
       return
@@ -94,16 +110,46 @@ export default function MainMenu({
     setChangingLibrary(true)
     setCreateError('')
     try {
-      const updated = await window.api.practiceLibrary.createFolder(name)
-      onLibraryChange(updated)
-      const created = updated.folders.find((folder) => folder.name === name)
-      if (created) onFolderChange(created.id)
+      const api = window.api.practiceLibrary
+      if (nameMode === 'create') {
+        const updated = await api.createFolder(name)
+        onLibraryChange(updated)
+        const created = updated.folders.find((folder) => folder.name === name)
+        if (created) onFolderChange(created.id)
+        setSelectedId(null)
+      } else if (nameMode === 'renameFolder' && folderId) {
+        onLibraryChange(await api.renameFolder(folderId, name))
+      } else if (nameMode === 'renameAttempt' && selected) {
+        const { id, completedAt } = selected
+        onLibraryChange(await api.renameAttempt({ id, completedAt }, name))
+      }
       setFolderName('')
-      setSelectedId(null)
       newFolderDialog.current?.close()
     } catch (error) {
       console.error(error)
-      setCreateError('Couldn’t create the folder.')
+      setCreateError(
+        nameMode === 'create' ? 'Couldn’t create the folder.' : 'Couldn’t save the new name.'
+      )
+    } finally {
+      setChangingLibrary(false)
+    }
+  }
+
+  async function deleteFolder(deleteAttempts: boolean): Promise<void> {
+    if (!folderId || changingLibrary) return
+    setChangingLibrary(true)
+    setFolderError('')
+    try {
+      const removed = deleteAttempts ? currentFolderAttempts.map(({ id }) => id) : []
+      onLibraryChange(await window.api.practiceLibrary.deleteFolder(folderId, deleteAttempts))
+      if (removed.length) setDeletedIds((ids) => [...ids, ...removed])
+      onFolderChange(null)
+      setSelectedId(null)
+      deleteFolderDialog.current?.close()
+    } catch (error) {
+      console.error(error)
+      setFolderError('Couldn’t delete the folder.')
+      deleteFolderDialog.current?.close()
     } finally {
       setChangingLibrary(false)
     }
@@ -165,19 +211,57 @@ export default function MainMenu({
         <div className="ph-card-head">
           <h2 id="ph-folders-heading">Practice folders</h2>
         </div>
-        <div className="ph-menu-folder-controls">
-          <FolderSelect
-            folders={library.folders}
-            label="Current folder"
-            value={folderId}
-            disabled={changingLibrary}
-            onChange={(id) => {
-              onFolderChange(id)
-              setSelectedId(null)
-              setFolderError('')
-            }}
-          />
-        </div>
+        {!libraryLoading && !libraryError && library.folders.length === 0 ? (
+          <div className="ph-menu-empty">
+            <p className="ph-menu-empty-title">No folders found</p>
+            <p>
+              Folders group practice runs of the same presentation. Attempts without a folder are
+              listed under Practice attempts below.
+            </p>
+            <button
+              className="ph-script-button"
+              type="button"
+              disabled={changingLibrary}
+              onClick={() => openNameDialog('create')}
+            >
+              New folder
+            </button>
+          </div>
+        ) : (
+          <div className="ph-menu-folder-controls">
+            <FolderSelect
+              folders={library.folders}
+              label="Current folder"
+              value={folderId}
+              disabled={changingLibrary}
+              onChange={(id) => {
+                onFolderChange(id)
+                setSelectedId(null)
+                setFolderError('')
+              }}
+            />
+            {currentFolder && (
+              <div className="ph-menu-folder-actions">
+                <button
+                  className="ph-menu-secondary"
+                  type="button"
+                  disabled={changingLibrary}
+                  onClick={() => openNameDialog('renameFolder', currentFolder.name)}
+                >
+                  Rename folder
+                </button>
+                <button
+                  className="ph-menu-secondary ph-menu-danger"
+                  type="button"
+                  disabled={changingLibrary || practiceBusy}
+                  onClick={() => deleteFolderDialog.current?.showModal()}
+                >
+                  Delete folder
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {libraryLoading && <p role="status">Loading practice folders…</p>}
         {libraryError && <p role="status">Couldn’t load practice folders.</p>}
         {folderError && <p role="status">{folderError}</p>}
@@ -195,7 +279,7 @@ export default function MainMenu({
           )}
           {attempts.length > 0 && (
             <ul className="ph-menu-recording-list">
-              {attempts.map(({ id, completedAt, score }) => (
+              {attempts.map(({ id, completedAt, score, name }) => (
                 <li key={id}>
                   <button
                     type="button"
@@ -205,9 +289,12 @@ export default function MainMenu({
                       setSelectedId(id)
                     }}
                   >
-                    <time dateTime={new Date(completedAt).toISOString()}>
-                      {recordingDate.format(completedAt)}
-                    </time>
+                    <span className="ph-menu-attempt-title">
+                      {name && <strong>{name}</strong>}
+                      <time dateTime={new Date(completedAt).toISOString()}>
+                        {recordingDate.format(completedAt)}
+                      </time>
+                    </span>
                     <span>
                       {score && `${score.points}/${score.maximum} · `}
                       {recordingsById.has(id) ? 'Watch' : 'View'}
@@ -221,7 +308,9 @@ export default function MainMenu({
         {selected && (
           <section className="ph-menu-card" aria-labelledby="ph-preview-heading">
             <div className="ph-card-head">
-              <h2 id="ph-preview-heading">{recordingDate.format(selected.completedAt)}</h2>
+              <h2 id="ph-preview-heading">
+                {selected.name ?? recordingDate.format(selected.completedAt)}
+              </h2>
             </div>
             {deletingId === selected.id ? (
               <p role="status">Deleting session…</p>
@@ -249,6 +338,14 @@ export default function MainMenu({
                 />
               )}
               <button
+                className="ph-script-button"
+                type="button"
+                disabled={changingLibrary}
+                onClick={() => openNameDialog('renameAttempt', selected.name ?? '')}
+              >
+                Rename
+              </button>
+              <button
                 className="ph-script-button ph-menu-delete"
                 type="button"
                 disabled={practiceBusy || changingLibrary}
@@ -269,11 +366,7 @@ export default function MainMenu({
         aria-label="New folder"
         title="New folder"
         disabled={libraryLoading || libraryError}
-        onClick={() => {
-          setFolderName('')
-          setCreateError('')
-          newFolderDialog.current?.showModal()
-        }}
+        onClick={() => openNameDialog('create')}
       >
         <svg
           viewBox="0 0 24 24"
@@ -295,17 +388,31 @@ export default function MainMenu({
           if (event.target === event.currentTarget) event.currentTarget.close()
         }}
       >
-        <form onSubmit={(event) => void createFolder(event)}>
-          <h2 id="ph-new-folder-heading">New folder</h2>
-          <p>Group practice runs of the same presentation.</p>
+        <form onSubmit={(event) => void submitName(event)}>
+          <h2 id="ph-new-folder-heading">
+            {nameMode === 'create'
+              ? 'New folder'
+              : nameMode === 'renameFolder'
+                ? 'Rename folder'
+                : 'Rename attempt'}
+          </h2>
+          <p>
+            {nameMode === 'renameAttempt'
+              ? 'Leave it empty to show the date instead.'
+              : 'Group practice runs of the same presentation.'}
+          </p>
           <label className="ph-dialog-field">
-            Folder name
+            {nameMode === 'renameAttempt' ? 'Attempt name' : 'Folder name'}
             <input
-              required
+              required={nameMode !== 'renameAttempt'}
               autoFocus
               maxLength={80}
               value={folderName}
-              placeholder="e.g. Q3 review deck"
+              placeholder={
+                nameMode === 'renameAttempt' && selected
+                  ? recordingDate.format(selected.completedAt)
+                  : 'e.g. Q3 review deck'
+              }
               onChange={(event) => {
                 setFolderName(event.target.value)
                 setCreateError('')
@@ -329,9 +436,51 @@ export default function MainMenu({
             <button
               type="submit"
               className="ph-dialog-submit"
-              disabled={!folderName.trim() || changingLibrary}
+              disabled={(!folderName.trim() && nameMode !== 'renameAttempt') || changingLibrary}
             >
-              Create folder
+              {nameMode === 'create' ? 'Create folder' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </dialog>
+      <dialog
+        ref={deleteFolderDialog}
+        className="ph-dialog"
+        aria-labelledby="ph-delete-folder-heading"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) event.currentTarget.close()
+        }}
+      >
+        <form method="dialog">
+          <h2 id="ph-delete-folder-heading">Delete “{currentFolder?.name}”?</h2>
+          <p>
+            {currentFolderAttempts.length === 0
+              ? 'This folder is empty.'
+              : `It has ${currentFolderAttempts.length} practice attempt${
+                  currentFolderAttempts.length === 1 ? '' : 's'
+                }. Keep them in Unfiled, or delete them with their recordings and scores.`}
+          </p>
+          <div className="ph-dialog-actions">
+            <button type="submit" className="ph-dialog-cancel">
+              Cancel
+            </button>
+            {currentFolderAttempts.length > 0 && (
+              <button
+                type="button"
+                className="ph-dialog-secondary"
+                disabled={changingLibrary}
+                onClick={() => void deleteFolder(false)}
+              >
+                Keep attempts
+              </button>
+            )}
+            <button
+              type="button"
+              className="ph-dialog-danger"
+              disabled={changingLibrary}
+              onClick={() => void deleteFolder(true)}
+            >
+              {currentFolderAttempts.length > 0 ? 'Delete folder and attempts' : 'Delete folder'}
             </button>
           </div>
         </form>

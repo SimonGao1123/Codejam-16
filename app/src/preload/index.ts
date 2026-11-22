@@ -15,12 +15,22 @@ const api = {
       ipcRenderer.invoke('practice-library:delete-attempt', id),
     createFolder: (name: string): Promise<PracticeLibrary> =>
       ipcRenderer.invoke('practice-library:create-folder', name),
+    renameFolder: (id: string, name: string): Promise<PracticeLibrary> =>
+      ipcRenderer.invoke('practice-library:rename-folder', id, name),
+    deleteFolder: (id: string, deleteAttempts: boolean): Promise<PracticeLibrary> =>
+      ipcRenderer.invoke('practice-library:delete-folder', id, deleteAttempts),
+    renameAttempt: (
+      entry: Pick<PracticeAttempt, 'id' | 'completedAt'>,
+      name: string
+    ): Promise<PracticeLibrary> =>
+      ipcRenderer.invoke('practice-library:rename-attempt', entry, name),
     saveAttempt: (attempt: PracticeAttempt): Promise<PracticeLibrary> =>
       ipcRenderer.invoke('practice-library:save-attempt', attempt),
     moveAttempt: (
       entry: Pick<PracticeAttempt, 'id' | 'completedAt'>,
       folderId: string | null
-    ): Promise<PracticeLibrary> => ipcRenderer.invoke('practice-library:move-attempt', entry, folderId)
+    ): Promise<PracticeLibrary> =>
+      ipcRenderer.invoke('practice-library:move-attempt', entry, folderId)
   },
   webcamRecorder: {
     list: (): Promise<SavedRecording[]> => ipcRenderer.invoke('webcam-recorder:list'),

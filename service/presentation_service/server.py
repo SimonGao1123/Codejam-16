@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosedError
 
 from .audio_analysis import AudioAnalyzer
 from .scoring import score_presentation
@@ -242,14 +243,18 @@ async def main(host="127.0.0.1", port=8766):
 
     async def handler(ws):
         path = ws.request.path
-        if path in ("/webcam", "/"):
-            await webcam_connection(ws, session)
-        elif path == "/audio":
-            await audio_connection(ws, session)
-        elif path == "/voice-calibration":
-            await voice_calibration_connection(ws)
-        else:
-            await ws.close(4404, f"unknown path {path}")
+        try:
+            if path in ("/webcam", "/"):
+                await webcam_connection(ws, session)
+            elif path == "/audio":
+                await audio_connection(ws, session)
+            elif path == "/voice-calibration":
+                await voice_calibration_connection(ws)
+            else:
+                await ws.close(4404, f"unknown path {path}")
+        except ConnectionClosedError:
+            # the app reloaded or quit without closing the socket; it reconnects on its own
+            log.info("%s connection dropped without closing", path)
 
     async with serve(handler, host, port, max_size=2**22):
         log.info("listening on ws://%s:%d  (/webcam, /audio)", host, port)

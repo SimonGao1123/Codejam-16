@@ -228,7 +228,7 @@
 }
 
 .ph-dialog {
-  width: min(420px, calc(100vw - 32px));
+  width: min(560px, calc(100vw - 32px));
   padding: 0;
   border: 1px solid var(--c-border);
   border-radius: var(--radius-lg);
@@ -283,6 +283,7 @@
 }
 .ph-dialog-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   margin: 6px -20px -20px;
@@ -293,6 +294,7 @@
 .ph-dialog-actions button {
   min-height: 38px;
   padding: 0 16px;
+  white-space: nowrap;
   border: 0;
   border-radius: var(--radius);
   font-weight: 600;
@@ -312,6 +314,82 @@
   background: var(--c-accent-hover);
 }
 .ph-dialog-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* folder actions, empty state, attempt names */
+.ph-menu-folder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ph-app .ph-menu-secondary {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--c-text);
+  font-weight: 600;
+}
+.ph-app .ph-menu-secondary:hover:not(:disabled) {
+  background: var(--c-raised);
+}
+.ph-app .ph-menu-danger {
+  border-color: var(--c-danger-border);
+  color: var(--c-danger-text);
+}
+.ph-app .ph-menu-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ph-menu-empty {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin: 0 16px 16px;
+  padding: 18px;
+  border: 1px dashed var(--c-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--c-inset);
+}
+.ph-menu-empty p {
+  margin: 0;
+  color: var(--c-muted);
+}
+.ph-menu-empty .ph-menu-empty-title {
+  color: var(--c-text);
+  font-weight: 700;
+  font-size: 16px;
+}
+.ph-menu-empty button {
+  margin-top: 8px;
+}
+.ph-menu-attempt-title {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+.ph-menu-attempt-title strong + time {
+  color: var(--c-muted);
+  font-size: 13px;
+}
+.ph-dialog-secondary {
+  background: var(--c-raised);
+  color: var(--c-text);
+}
+.ph-dialog-secondary:hover:not(:disabled) {
+  background: var(--c-border-strong);
+}
+.ph-dialog-danger {
+  background: var(--c-danger);
+  color: #ffffff;
+}
+.ph-dialog-danger:hover:not(:disabled) {
+  background: #a82628;
+}
+.ph-dialog-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
