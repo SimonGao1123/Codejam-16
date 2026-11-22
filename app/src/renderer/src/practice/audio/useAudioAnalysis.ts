@@ -16,6 +16,7 @@ import {
   type SessionScoreMessage,
   type ScriptPositionMessage,
   type TranscriptMessage,
+  type VoiceBaseline,
   type VoiceMessage
 } from './audioProtocol'
 
@@ -63,7 +64,8 @@ export function useAudioAnalysis(
   micStream: MediaStream | null,
   script: string,
   targetMinutes: number | null,
-  startedAt: number | null
+  startedAt: number | null,
+  voiceBaseline: VoiceBaseline | null
 ): AudioAnalysis {
   const clientRef = useRef<AudioAnalysisClient | null>(null)
   const pitchRef = useRef<VoiceSample[]>([])
@@ -208,9 +210,9 @@ export function useAudioAnalysis(
     }
     const noise = noiseLevels.current
     if (noise.length >= MIN_NOISE_BLOCKS) client.send({ type: 'noise_floor', dbfs: median(noise) })
-    client.send({ type: 'session_start', started_at: startedAt })
+    client.send({ type: 'session_start', started_at: startedAt, voice_baseline: voiceBaseline })
     scoringActive.current = true
-  }, [startedAt, connected])
+  }, [startedAt, connected, voiceBaseline])
 
   function finishScoring(): Promise<SessionScoreMessage | null> {
     const client = clientRef.current

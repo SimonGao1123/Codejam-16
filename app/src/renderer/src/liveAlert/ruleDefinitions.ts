@@ -29,7 +29,7 @@ export const rules = [
     unit: 'dB above normal',
     min: 3,
     max: 18,
-    value: 8,
+    value: 6,
     duration: 0.3,
     cooldown: 3
   },
@@ -68,13 +68,13 @@ export const rules = [
   {
     id: 'pitch',
     group: 'Voice',
-    name: 'Pitch spike',
+    name: 'Pitch swings',
     cue: 'Steady your pitch',
-    unit: 'semitones above normal',
+    unit: 'semitones from normal',
     min: 3,
     max: 18,
-    value: 9,
-    duration: 0.2,
+    value: 6,
+    duration: 0.3,
     cooldown: 3
   },
   {
@@ -85,8 +85,8 @@ export const rules = [
     unit: 'dB below normal',
     min: 5,
     max: 30,
-    value: 15,
-    duration: 3,
+    value: 8,
+    duration: 0.7,
     cooldown: 3
   },
   {

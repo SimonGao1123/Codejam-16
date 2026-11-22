@@ -6,14 +6,14 @@ existing live rule IDs. Count a sustained webcam condition once, even if it
 appears in many frames. Use 0 for rules that were measured and never triggered,
 and omit rules that could not be evaluated (e.g. shoulders without calibration).
 
-Scoring is rate-based. Each rule's incidents are converted to incidents per
+Filler scoring is rate-based. Counts are converted to incidents per
 minute, then compared to two thresholds:
 
   * at or below the GOOD rate  -> no deduction (normal, natural speech)
   * at or above the BAD rate   -> the rule's full maximum deduction
   * in between                 -> the deduction rises linearly
 
-So the same mistakes cost less in a long presentation than in a short one.
+Voice and body language use sustained incident counts directly, regardless of session length.
 """
 
 from collections.abc import Collection, Mapping
@@ -28,21 +28,21 @@ FILLER_MAX_POINTS = 6
 # (good rate, bad rate) in fillers per minute
 FILLER_RATES = (2.0, 8.0)
 
-# Rule ID: (good rate/min, bad rate/min, maximum deduction, feedback)
+# Rule ID: (maximum points, fraction lost per sustained incident, feedback)
 VOICE_RULES = {
-    "volume": (1.0, 4.0, 1, "Keep your volume steady and soften sudden loud peaks."),
-    "pitch": (1.0, 4.0, 1, "Vary your tone naturally and smooth out sudden jumps in pitch."),
-    "quiet": (1.0, 4.0, 1, "Project a little more during quiet passages."),
+    "volume": (2, 0.75, "Keep your volume steady and soften sudden loud peaks."),
+    "pitch": (2, 1.0, "Smooth out sudden rises and drops in pitch."),
+    "quiet": (2, 0.75, "Project a little more during quiet passages."),
 }
+# Rule ID: (maximum points, fraction lost per sustained incident, feedback)
 BODY_RULES = {
-    "look_down": (0.5, 3.0, 4, "Bring your eyes back to the calibrated camera position after checking notes."),
-    "face": (0.25, 2.0, 1.5, "Stay in frame and face the camera while speaking."),
-    "tilt": (0.25, 2.0, 2, "Keep your shoulders level with your calibrated posture."),
-    "repeat": (0.5, 2.5, 1, "Vary your gestures and avoid repeating the same motion in quick succession."),
-    "still": (0.25, 2.0, 1.5, "Use an occasional purposeful gesture to emphasize a point."),
-    "fast": (0.5, 2.5, 1, "Slow down quick hand movements so each gesture has a clear purpose."),
+    "look_down": (3, 0.75, "Bring your eyes back to the calibrated camera position after checking notes."),
+    "face": (3, 1.0, "Stay in frame and face the camera while speaking."),
+    "tilt": (1.5, 0.75, "Keep your shoulders level with your calibrated posture."),
+    "repeat": (0.75, 0.75, "Vary your gestures and avoid repeating the same motion in quick succession."),
+    "still": (1, 0.75, "Use an occasional purposeful gesture to emphasize a point."),
+    "fast": (0.75, 0.75, "Slow down quick hand movements so each gesture has a clear purpose."),
 }
-MAX_SCORE = FILLER_MAX_POINTS + sum(rule[2] for rule in (*VOICE_RULES.values(), *BODY_RULES.values()))
 PACE_MAX_POINTS = 4
 # Presentation guidance varies with context.  A 140 WPM centre and a 40 WPM
 # comfortable band are sensible defaults; the centre is configurable in the UI.
@@ -101,25 +101,16 @@ def _category(checks: dict) -> dict:
     }
 
 
-def _incident_category(
-    counts: Mapping[str, int] | None,
-    rules: dict,
-    scoring_minutes: float,
-    length_known: bool,
-) -> dict:
+def _sustained_category(counts: Mapping[str, int] | None, rules: dict) -> dict:
     checks = {}
-    for rule_id, (good, bad, maximum, tip) in rules.items():
+    for rule_id, (maximum, loss_per_incident, tip) in rules.items():
         if counts is None or rule_id not in counts:
             continue
         count = _count(counts[rule_id])
-        rate = count / scoring_minutes
         checks[rule_id] = {
             "count": count,
-            "per_minute": round(rate, 2) if length_known else None,
-            "good_rate": good,
-            "bad_rate": bad,
             "max_points": maximum,
-            "deduction": round(_rate_deduction(rate, good, bad, maximum), 3),
+            "deduction": maximum * min(1, count * loss_per_incident),
             "feedback": tip if count else None,
         }
     return _category(checks)
@@ -227,8 +218,8 @@ def score_presentation(
     FALLBACK_MINUTES is assumed. Lengths under MIN_SCORING_MINUTES are scored
     as MIN_SCORING_MINUTES. The result's scoring_minutes shows the length used.
 
-    The complete rubric allocates 6 points for fillers, 3 for voice tone,
-    4 for speaking pace, 11 for body language, and 6 for script accuracy. The score
+    The complete rubric allocates 6 points for fillers, 6 for voice tone,
+    4 for speaking pace, 10 for body language, and 6 for script accuracy. The score
     is the share of the available points kept, scaled to 100. measured_points shows
     how much of the rubric was evaluated. Checks tied to disabled alerts are excluded.
     With no measured data, score is None.
@@ -259,9 +250,9 @@ def score_presentation(
 
     categories = {
         "filler": _category(filler_checks),
-        "voice_tone": _incident_category(voice_incidents, VOICE_RULES, scoring_minutes, length_known),
+        "voice_tone": _sustained_category(voice_incidents, VOICE_RULES),
         "speaking_pace": _pace_category(pace, pace_target_wpm),
-        "body_language": _incident_category(body_incidents, BODY_RULES, scoring_minutes, length_known),
+        "body_language": _sustained_category(body_incidents, BODY_RULES),
         "script_accuracy": _script_category(script_match),
     }
     if disabled_alerts:

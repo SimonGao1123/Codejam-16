@@ -8,6 +8,8 @@ const CATEGORY_LABELS = {
   script_accuracy: 'Script accuracy'
 } as const
 
+const VOICE_LABELS = { pitch: 'Pitch swings', volume: 'Volume spikes', quiet: 'Low volume' }
+
 export default function SessionResults({
   result
 }: {
@@ -41,6 +43,23 @@ export default function SessionResults({
               )
             })}
           </dl>
+          {result.categories.voice_tone.points !== null && (
+            <dl className="ph-results-breakdown" aria-label="Voice tone checks">
+              {Object.entries(VOICE_LABELS).map(([id, label]) => {
+                const check = result.categories.voice_tone.checks[id]
+                if (!check) return null
+                return (
+                  <div key={id}>
+                    <dt>{label}</dt>
+                    <dd>
+                      {check.max_points - check.deduction} / {check.max_points}
+                      <small> · {check.count} {check.count === 1 ? 'violation' : 'violations'}</small>
+                    </dd>
+                  </div>
+                )
+              })}
+            </dl>
+          )}
           <p>Score based on {result.measured_points} measured rubric points.</p>
           {result.feedback.length > 0 ? (
             <ul>

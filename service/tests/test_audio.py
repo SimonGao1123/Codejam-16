@@ -11,8 +11,9 @@ import pytest
 
 from presentation_service.audio_analysis import AudioAnalyzer
 from presentation_service.scoring import BODY_RULES, VOICE_RULES, score_presentation
-from presentation_service.server import AlertBoard, Session, audio_connection
+from presentation_service.server import AlertBoard, Session, audio_connection, voice_calibration_connection
 from presentation_service.transcript import load_moonshine
+from presentation_service.voice import CALIBRATION_SECONDS, pitch_hz
 
 SR = 16000
 
@@ -48,50 +49,150 @@ def test_tone_gives_pitch_and_volume(stt_model):
     assert len(msgs) == 20                                      # every 100 ms
     assert all(len(m["pitches"]) == 2 for m in msgs)            # both 50 ms readings in each
     assert abs(msgs[-1]["pitch_hz"] - 200) < 5 and -20 < msgs[-1]["volume_dbfs"] < -10
-    # after ~1 s of voice the running typical pitch exists; a spike fires 9 semitones above it
-    assert msgs[0]["typical_hz"] is None and abs(msgs[-1]["typical_hz"] - 200) < 5
-    assert abs(msgs[-1]["spike_hz"] - msgs[-1]["typical_hz"] * 2 ** (9 / 12)) < 0.5
+    assert msgs[-1]["typical_hz"] is None and msgs[-1]["spike_hz"] is None
+    assert msgs[-1]["typical_volume_dbfs"] is None
 
 
-def test_typical_pitch_follows_the_last_10_seconds_of_speech(stt_model):
-    a = AudioAnalyzer(stt_model, AlertBoard())
-    a.set_noise_floor(-70.0)
-    tone = lambda hz, s: (0.2 * np.sin(2 * np.pi * hz * np.arange(int(SR * s)) / SR)).astype(np.float32)  # noqa: E731
-    silence = lambda s: np.zeros(int(SR * s), dtype=np.float32)                                             # noqa: E731
-
-    msgs = feed_all(a, tone(150, 4))
-    assert abs(msgs[-1]["typical_hz"] - 150) < 5
-    # a long pause doesn't count: the window is 10 s of *speech*, so 150 Hz is still typical after it
-    msgs = feed_all(a, silence(20))
-    assert abs(msgs[-1]["typical_hz"] - 150) < 5
-    # 4 s at 150 + 4 s at 220 fit in the window together; the median sits between them
-    msgs = feed_all(a, tone(220, 4))
-    assert 140 < msgs[-1]["typical_hz"] < 230
-    # after more than 10 s at 220 Hz, the old 150 Hz speech has left the window
-    msgs = feed_all(a, tone(220, 8))
-    assert abs(msgs[-1]["typical_hz"] - 220) < 5
-    assert "calibrated" not in msgs[-1]                 # no voice calibration anymore
-
-
-def test_quiet_alert_posts_to_board(stt_model):
+@pytest.mark.parametrize(("hz", "amp", "rule", "banner"), [
+    (130, 0.2, "pitch", "Steady your pitch"),
+    (300, 0.2, "pitch", "Steady your pitch"),
+    (200, 0.5, "volume", "Steady your volume"),
+    (200, 0.06, "quiet", "Speak up"),
+])
+def test_sustained_voice_violations_alert_and_lose_credit(hz, amp, rule, banner):
     board = AlertBoard()
-    feed_all(AudioAnalyzer(stt_model, board), np.zeros(SR * 4, dtype=np.float32))
-    assert "Speak up" in board.active()
+    analyzer = AudioAnalyzer(Mock(), board)
+    analyzer.reset((200, -17))
+    analyzer.set_noise_floor(-65.0)
+
+    def tone(frequency, amplitude, seconds):
+        return amplitude * np.sin(2 * np.pi * frequency * np.arange(int(SR * seconds)) / SR)
+
+    feed_all(analyzer, tone(200, 0.2, 2))
+    messages = feed_all(analyzer, tone(hz, amp, 0.8))
+    assert banner in board.active()
+    assert any(banner in msg.get("alerts", []) for msg in messages)
+    assert analyzer.voice_incidents[rule] == 1
+    report = score_presentation(voice_incidents=analyzer.voice_incidents, duration_seconds=600)
+    assert report["categories"]["voice_tone"]["checks"][rule]["deduction"] == (2 if rule == "pitch" else 1.5)
+
+    # Another failure during the banner cooldown still counts in the results.
+    feed_all(analyzer, tone(200, 0.2, 0.2))
+    feed_all(analyzer, tone(hz, amp, 0.8))
+    assert analyzer.voice_incidents[rule] == 2
+    report = score_presentation(voice_incidents=analyzer.voice_incidents, duration_seconds=600)
+    assert report["categories"]["voice_tone"]["checks"][rule]["deduction"] == 2
+
+
+def test_pitch_estimator_prefers_fundamental_over_a_louder_third_harmonic():
+    phase = 2 * np.pi * 127 * np.arange(SR // 20) / SR
+    assert pitch_hz(0.04 * np.sin(phase) + 0.15 * np.sin(3 * phase)) == pytest.approx(127, abs=2)
+
+
+def test_short_pitch_swings_count_across_unvoiced_gaps_and_direction_changes():
+    analyzer = AudioAnalyzer(Mock(), AlertBoard())
+    analyzer.reset((200, -17))
+    analyzer.voice.pitch_spike.duration_seconds = 0.1
+    time = np.arange(SR // 20) / SR
+    high = 0.2 * np.sin(2 * np.pi * 300 * time)
+    low = 0.2 * np.sin(2 * np.pi * 130 * time)
+    samples = np.concatenate([high, np.zeros_like(high), high, low, low])
+    feed_all(analyzer, samples)
+    assert analyzer.voice_incidents["pitch"] == 2
+
+
+def test_isolated_high_pitch_jumps_are_filtered_but_sustained_high_pitch_counts():
+    analyzer = AudioAnalyzer(Mock(), AlertBoard())
+    analyzer.reset((127, -17))
+    time = np.arange(SR // 20) / SR
+    normal = 0.2 * np.sin(2 * np.pi * 127 * time)
+    harmonic = 0.2 * np.sin(2 * np.pi * 381 * time)
+    high = 0.2 * np.sin(2 * np.pi * 420 * time)
+    short = feed_all(analyzer, np.concatenate([normal, harmonic, normal, high, normal, normal]))
+    pitches = [pitch for msg in short if msg["type"] == "voice" for pitch in msg["pitches"]]
+    assert pitches[1] is None and pitches[3] is None
+    assert analyzer.voice_incidents["pitch"] == 0
+    readings = feed_all(analyzer, np.tile(high, 12))
+    assert any(msg.get("pitch_hz", 0) and msg["pitch_hz"] > 400 for msg in readings)
+    assert analyzer.voice_incidents["pitch"] == 1
+
+
+def test_voice_calibration_endpoint_measures_speech_and_rejects_silence():
+    class Client:
+        def __init__(self, samples):
+            self.samples = samples
+            self.reply = None
+
+        async def __aiter__(self):
+            yield self.samples.astype("<f4").tobytes()
+
+        async def send(self, message):
+            self.reply = json.loads(message)
+
+    tone = 0.2 * np.sin(2 * np.pi * 200 * np.arange(SR * CALIBRATION_SECONDS) / SR)
+    client = Client(tone)
+    asyncio.run(voice_calibration_connection(client))
+    assert client.reply["baseline"]["pitch_hz"] == pytest.approx(200, abs=3)
+    assert client.reply["baseline"]["volume_dbfs"] == pytest.approx(-17, abs=0.1)
+
+    silent = Client(np.zeros_like(tone))
+    asyncio.run(voice_calibration_connection(silent))
+    assert "microphone level was too low" in silent.reply["error"]
+
+    # A low-gain microphone and short voiced syllables separated by unvoiced sounds.
+    rng = np.random.default_rng(6)
+    speech_like = rng.normal(0, 0.00012, len(tone))
+    for start in (1.0, 1.4, 1.9, 2.2, 2.7, 3.1, 3.4, 3.8):
+        offset = round(start * SR)
+        length = round(0.14 * SR)
+        speech_like[offset:offset + length] += 0.001 * np.hanning(length) * tone[:length] / 0.2
+    quiet = Client(speech_like)
+    asyncio.run(voice_calibration_connection(quiet))
+    assert quiet.reply["baseline"]["pitch_hz"] == pytest.approx(200, abs=5)
+    assert -70 <= quiet.reply["baseline"]["volume_dbfs"] < -60
+
+    noise = Client(rng.normal(0, 0.005, len(tone)))
+    asyncio.run(voice_calibration_connection(noise))
+    assert "clear pitch" in noise.reply["error"]
+
+
+def test_pitch_and_volume_baseline_does_not_follow_sustained_voice_changes():
+    a = AudioAnalyzer(Mock(), AlertBoard())
+    a.reset((150, -17))
+    tone = 0.4 * np.sin(2 * np.pi * 250 * np.arange(SR * 12) / SR)
+    readings = [msg for msg in feed_all(a, tone) if msg["type"] == "voice"]
+    assert all(msg["typical_hz"] == 150 and msg["typical_volume_dbfs"] == -17 for msg in readings)
+    assert readings[0]["spike_hz"] == pytest.approx(150 * 2 ** (6 / 12), abs=0.1)
+    assert a.voice_incidents["pitch"] == 1 and a.voice_incidents["volume"] == 1
+
+    a.reset((250, -11))
+    readings = [msg for msg in feed_all(a, tone[:SR]) if msg["type"] == "voice"]
+    assert readings[0]["typical_hz"] == 250 and readings[0]["typical_volume_dbfs"] == -11
+    assert a.voice_incidents["pitch"] == 0 and a.voice_incidents["volume"] == 0
+
+
+def test_uncalibrated_voice_is_measured_without_pitch_or_volume_deductions():
+    board = AlertBoard()
+    a = AudioAnalyzer(Mock(), board)
+    tone = 0.05 * np.sin(2 * np.pi * 170 * np.arange(SR * 4) / SR)
+    feed_all(a, tone)
+    assert not {"pitch", "volume", "quiet"} & a.voice_incidents.keys()
+    assert "Speak up" not in board.active()
 
 
 def test_fillers_are_scored_per_minute():
     voice = dict.fromkeys(VOICE_RULES, 0)
     body = dict.fromkeys(BODY_RULES, 0)
     # 8 fillers in one minute is at the "bad" rate (8/min): the full 6 filler points are lost.
-    # The 20 measured rubric points are scaled to a score out of 100.
+    # The 22 measured rubric points are scaled to a score out of 100.
     result = score_presentation(filler_counts={"um": 8, "filler?": 5},
                                 voice_incidents=voice, body_incidents=body, duration_seconds=60)
     assert result["max_score"] == 100
-    assert result["measured_points"] == 20
+    assert result["measured_points"] == 22
     assert result["categories"]["filler"]["deduction"] == 6
-    assert result["score"] == pytest.approx(100 * 14 / 20)
-    assert result["categories"]["voice_tone"]["max_points"] == 3
-    assert result["categories"]["body_language"]["max_points"] == 11
+    assert result["score"] == 72.7
+    assert result["categories"]["voice_tone"]["max_points"] == 6
+    assert result["categories"]["body_language"]["max_points"] == 10
     # the same 8 fillers over 10 minutes is under the "good" rate: nothing lost
     relaxed = score_presentation(filler_counts={"um": 8}, voice_incidents=voice, body_incidents=body,
                                  duration_seconds=600)
@@ -130,8 +231,8 @@ def test_disabled_alerts_exclude_only_their_scoring_checks():
     assert set(checks["body_language"]["checks"]) == {"tilt"}
     assert set(checks["speaking_pace"]["checks"]) == {"moderate_pace"}
     assert checks["script_accuracy"]["points"] is None
-    assert report["measured_points"] == 5
-    assert report["score"] == 60
+    assert report["measured_points"] == 5.5
+    assert report["score"] == 63.6
     assert [tip["rule"] for tip in report["feedback"]] == ["moderate_pace"]
 
 
@@ -196,7 +297,8 @@ def test_session_score_has_recording_relative_checkpoints():
 
         async def __aiter__(self):
             yield json.dumps({"type": "script", "text": "Results improved across all markets."})
-            yield json.dumps({"type": "session_start", "started_at": 50})
+            yield json.dumps({"type": "session_start", "started_at": 50,
+                              "voice_baseline": {"pitch_hz": 180, "volume_dbfs": -20}})
             # One sustained camera incident should give one marker at the onset.
             for i in range(30):
                 session.webcam.process({"t": 50.5 + i / 10, "width": 640, "height": 480})
@@ -222,6 +324,7 @@ def test_session_score_has_recording_relative_checkpoints():
     assert readings[0]["captured_at"] == pytest.approx(51.6 - 1 / SR)
     assert readings[1]["captured_at"] == pytest.approx(51.7 - 1 / SR)
     assert readings[0]["pitch_times"] == pytest.approx([51.05 - 1 / SR, 51.6 - 1 / SR])
+    assert readings[0]["typical_hz"] == 180 and readings[0]["typical_volume_dbfs"] == -20
     assert client.sent[0]["type"] == "script_loaded" and client.sent[0]["ready"]
     transcript, script_position, report = client.sent[-3:]
     assert transcript["fillers"]["you know"] == 1
@@ -230,7 +333,6 @@ def test_session_score_has_recording_relative_checkpoints():
     assert report["categories"]["filler"]["points"] is None
     assert report["checkpoints"] == [
         {"at": 0.5, "category": "body_language", "label": "Face the camera"},
-        {"at": 1.0, "category": "voice_tone", "label": "Speak up"},
         {"at": 1.85, "category": "filler", "label": "Filler: you know"},
     ]
 
@@ -273,17 +375,21 @@ def voice_rules(**changes):
 
 
 def test_voice_settings_disable_and_retime_quiet_alert(stt_model):
-    silence = np.zeros(SR * 4, dtype=np.float32)
+    quiet = 0.02 * np.sin(2 * np.pi * 180 * np.arange(SR * 4) / SR)
     board = AlertBoard()
     a = AudioAnalyzer(stt_model, board)
     a.apply_settings(voice_rules(quiet={"enabled": False}))
-    feed_all(a, silence)
+    a.reset((180, -17))
+    feed_all(a, quiet)
+    assert a.voice_incidents["quiet"] == 1
     assert "Speak up" not in board.active()
 
     board = AlertBoard()
     a = AudioAnalyzer(stt_model, board)
-    a.apply_settings(voice_rules(quiet={"duration": 10}))       # longer than the 4 s of silence
-    feed_all(a, silence)
+    a.apply_settings(voice_rules(quiet={"duration": 10}))
+    a.reset((180, -17))
+    feed_all(a, quiet)
+    assert a.voice_incidents["quiet"] == 0
     assert "Speak up" not in board.active()
 
 
@@ -330,24 +436,60 @@ def test_room_silence_level_separates_pauses_from_quiet_speech(stt_model):
     room = (0.003 * np.random.default_rng(0).standard_normal(len(t))).astype(np.float32)   # ~-50 dBFS hiss
     quiet_voice = (0.006 * np.sin(2 * np.pi * 180 * t)).astype(np.float32)                 # ~-47 dBFS
 
-    # without a measured silence level, room hiss alone counts as "too quiet" -> Speak up
-    board = AlertBoard()
-    feed_all(AudioAnalyzer(stt_model, board), room)
-    assert "Speak up" in board.active()
-
-    # with it: the same hiss is just "not speaking" (a pause), no alert...
+    # Room hiss below the measured silence level is not treated as quiet speech.
     board = AlertBoard()
     a = AudioAnalyzer(stt_model, board)
     a.set_noise_floor(-50.0)
+    a.reset((180, -25))
     msgs = [m for m in feed_all(a, room) if m["type"] == "voice"]
     assert "Speak up" not in board.active()
-    assert not msgs[-1]["speaking"] and msgs[-1]["silence_dbfs"] == -40.0
+    assert not msgs[-1]["speaking"] and msgs[-1]["silence_dbfs"] == -45.0
 
     # ...while speaking above the room level but quietly still counts as speaking quietly
-    a = AudioAnalyzer(stt_model, AlertBoard())
+    a = AudioAnalyzer(stt_model, board)
     a.set_noise_floor(-60.0)
+    a.reset((180, -25))
     msgs = [m for m in feed_all(a, quiet_voice) if m["type"] == "voice"]
     assert msgs[-1]["speaking"] and msgs[-1]["pitch_hz"]
+    assert "Speak up" in board.active()
+
+
+def test_quiet_voiced_speech_below_room_cutoff_counts_but_noise_does_not():
+    board = AlertBoard()
+    analyzer = AudioAnalyzer(Mock(), board)
+    analyzer.set_noise_floor(-55)
+    analyzer.reset((180, -45))
+    time = np.arange(SR) / SR
+    noise = np.random.default_rng(4).normal(0, 0.0002, SR)
+    feed_all(analyzer, noise)
+    assert analyzer.voice_incidents.get("quiet", 0) == 0
+
+    quiet_speech = 0.0005 * np.sin(2 * np.pi * 180 * time)
+    reading = feed_all(analyzer, quiet_speech)[-1]
+    assert reading["volume_dbfs"] < reading["quiet_limit_dbfs"] == -53
+    assert reading["volume_dbfs"] < reading["silence_dbfs"] == -65 and reading["speaking"]
+    assert "Speak up" in board.active()
+    report = score_presentation(voice_incidents=analyzer.voice_incidents)
+    assert report["categories"]["voice_tone"]["checks"]["quiet"]["deduction"] == 1.5
+
+
+def test_quiet_unpitched_bursts_count_across_short_pauses():
+    board = AlertBoard()
+    analyzer = AudioAnalyzer(Mock(), board)
+    # A bad room measurement would otherwise put the speech cutoff at -42 dBFS.
+    analyzer.set_noise_floor(-52)
+    analyzer.reset((180, -45))
+    rng = np.random.default_rng(18)
+    quiet_burst = rng.normal(0, 0.0007, SR // 4)
+    pause = np.zeros(SR // 2)
+    # Three quarter-second bursts around -63 dBFS, with no reliable pitch.
+    readings = feed_all(analyzer, np.concatenate([quiet_burst, pause, quiet_burst, pause, quiet_burst]))
+    assert all(msg["pitch_hz"] is None for msg in readings if msg["type"] == "voice")
+    assert readings[-1]["silence_dbfs"] == -65
+    assert analyzer.voice_incidents["quiet"] == 1
+    assert "Speak up" in board.active()
+    report = score_presentation(voice_incidents=analyzer.voice_incidents)
+    assert report["categories"]["voice_tone"]["checks"]["quiet"]["deduction"] == 1.5
 
 
 def test_silence_level_survives_a_new_session_and_is_clamped(stt_model):
@@ -418,10 +560,10 @@ def test_volume_and_quiet_incidents_are_scored_under_voice_tone():
         duration_seconds=60,
     )
     voice = report["categories"]["voice_tone"]
-    assert voice["max_points"] == 3
+    assert voice["max_points"] == 6
     assert set(voice["checks"]) == {"volume", "quiet", "pitch"}
-    assert voice["checks"]["volume"]["deduction"] == 1
-    assert 0 < voice["checks"]["quiet"]["deduction"] < 1
+    assert voice["checks"]["volume"]["deduction"] == 2
+    assert voice["checks"]["quiet"]["deduction"] == 2
     assert voice["checks"]["pitch"]["deduction"] == 0
 
 

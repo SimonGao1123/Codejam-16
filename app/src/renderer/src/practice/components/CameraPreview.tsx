@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useAlertPreferences } from '../../liveAlert/useAlertPreferences'
 import type { ClientMessage } from '../camera/webcamProtocol'
 
 import WebcamControls from './WebcamControls'
@@ -9,6 +10,7 @@ type Props = {
   camera: boolean
   pending: boolean
   running: boolean
+  voiceAlerts?: string[]
   logWebcam: (message: ClientMessage) => void
   wpm: number | null
   wpmUpdatedAt: number | null
@@ -23,6 +25,7 @@ export default function CameraPreview({
   camera,
   pending,
   running,
+  voiceAlerts,
   logWebcam,
   wpm,
   wpmUpdatedAt,
@@ -32,6 +35,7 @@ export default function CameraPreview({
   children
 }: Props): React.JSX.Element {
   const webcam = useRef<WebcamHandle>(null)
+  const [preferences] = useAlertPreferences()
   useEffect(() => {
     const view = webcam.current
     view?.setLogger(logWebcam)
@@ -68,6 +72,14 @@ export default function CameraPreview({
                 ? 'Your camera preview appears when you start.'
                 : 'Camera preview is off.'}
             </p>
+            <div role="status">
+              {preferences.style !== 'silent' &&
+                voiceAlerts?.map((alert) => (
+                  <p className="ph-error" key={alert}>
+                    {alert}
+                  </p>
+                ))}
+            </div>
           </div>
         )}
       </div>

@@ -29,7 +29,7 @@ export default function LiveAlerts(): React.JSX.Element {
     <main className="la">
       <div className="la-shell">
         <header className="la-header">
-          <p className="la-product">Presentation Helper</p>
+          <p className="la-product">Colloquia</p>
           <h1>Live alerts</h1>
           <p>Choose what to watch for while you practice.</p>
         </header>

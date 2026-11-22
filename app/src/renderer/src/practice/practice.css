@@ -53,6 +53,7 @@
 }
 .ph-bar nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 .ph-bar button {
@@ -529,12 +530,27 @@
 .ph-results ul {
   padding-left: 20px;
 }
+.ph-voice-calibration-actions {
+  display: flex;
+  padding: 0 16px 16px;
+}
+.ph-voice-calibration-actions button {
+  min-inline-size: 10rem;
+}
 .ph-pitch-graph {
   display: block;
   width: 100%;
   height: 170px;
   padding: 0 8px 10px;
   box-sizing: border-box;
+}
+.ph-pitch-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 0 16px 12px;
+  color: #c4bfda;
+  font-size: 0.85rem;
 }
 .ph-transcript {
   margin-top: 18px;

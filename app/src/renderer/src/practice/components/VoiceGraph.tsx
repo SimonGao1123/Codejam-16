@@ -12,6 +12,8 @@ type Props = {
   metric: 'pitch' | 'volume' | 'wpm'
   typicalHz?: number | null
   spikeHz?: number | null
+  typicalDbfs?: number | null
+  quietDbfs?: number | null
   silenceDbfs?: number | null // volume graph: below this the speaker counts as not speaking
   desiredWpm?: number | null // pace graph: the pace to aim for
   live: boolean // false: freeze on the last reading (session ended)
@@ -23,7 +25,7 @@ const SCALES = {
   volume: { ticks: [-80, -60, -40, -20, 0], unit: 'dBFS' },
   wpm: { ticks: [0, 80, 120, 160, 200, 240], unit: 'WPM' }
 }
-const PITCH_JOIN_S = 0.151 // bridge up to two missing 50 ms readings
+const PITCH_JOIN_S = 0.251
 const VOLUME_JOIN_S = 0.25
 const COLORS = {
   grid: '#38334e',
@@ -40,16 +42,18 @@ export default function VoiceGraph({
   metric,
   typicalHz = null,
   spikeHz = null,
+  typicalDbfs = null,
+  quietDbfs = null,
   silenceDbfs = null,
   desiredWpm = null,
   live
 }: Props): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const linesRef = useRef({ typicalHz, spikeHz, silenceDbfs, desiredWpm, live })
+  const linesRef = useRef({ typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, live })
 
   useEffect(() => {
-    linesRef.current = { typicalHz, spikeHz, silenceDbfs, desiredWpm, live }
-  }, [typicalHz, spikeHz, silenceDbfs, desiredWpm, live])
+    linesRef.current = { typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, live }
+  }, [typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, live])
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -73,12 +77,28 @@ export default function VoiceGraph({
     return () => cancelAnimationFrame(frame)
   }, [samples, metric])
 
+  const lowHz = typicalHz && spikeHz ? typicalHz ** 2 / spikeHz : null
   return (
-    <canvas
-      ref={canvasRef}
-      className="ph-pitch-graph"
-      aria-label={`Voice ${metric} over the last ${VOICE_WINDOW_S} seconds`}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        className="ph-pitch-graph"
+        aria-label={`Voice ${metric} over the last ${VOICE_WINDOW_S} seconds`}
+      />
+      {metric === 'pitch' && typicalHz && spikeHz && lowHz && (
+        <div className="ph-pitch-legend">
+          <span>Calibrated pitch {Math.round(typicalHz)} Hz</span>
+          <span>Acceptable range {Math.round(lowHz)}–{Math.round(spikeHz)} Hz</span>
+        </div>
+      )}
+      {metric === 'volume' && (typicalDbfs !== null || silenceDbfs !== null) && (
+        <div className="ph-pitch-legend">
+          {typicalDbfs !== null && <span>Calibrated volume {Math.round(typicalDbfs)} dBFS</span>}
+          {quietDbfs !== null && <span>Quiet speech threshold {Math.round(quietDbfs)} dBFS</span>}
+          {silenceDbfs !== null && <span>Speech cutoff {Math.round(silenceDbfs)} dBFS</span>}
+        </div>
+      )}
+    </>
   )
 }
 
@@ -90,6 +110,8 @@ function render(
   lines: {
     typicalHz: number | null
     spikeHz: number | null
+    typicalDbfs: number | null
+    quietDbfs: number | null
     silenceDbfs: number | null
     desiredWpm: number | null
     live: boolean
@@ -121,6 +143,11 @@ function render(
 
   ctx.font = FONT
   ctx.lineWidth = 1
+  if (lines.spikeHz && lines.typicalHz) {
+    const lowHz = lines.typicalHz ** 2 / lines.spikeHz
+    ctx.fillStyle = 'rgba(143, 214, 161, 0.10)'
+    ctx.fillRect(left, y(lines.spikeHz), right - left, y(lowHz) - y(lines.spikeHz))
+  }
   // Horizontal grid and measurement labels.
   ctx.textAlign = 'right'
   ctx.textBaseline = 'middle'
@@ -143,7 +170,7 @@ function render(
   }
 
   // reference lines
-  const dashed = (hz: number, color: string, label: string): void => {
+  const dashed = (hz: number, color: string, label?: string): void => {
     ctx.strokeStyle = color
     ctx.setLineDash([6, 4])
     ctx.beginPath()
@@ -151,25 +178,23 @@ function render(
     ctx.lineTo(right, y(hz))
     ctx.stroke()
     ctx.setLineDash([])
-    ctx.fillStyle = color
-    ctx.textAlign = 'right'
-    ctx.textBaseline = 'bottom'
-    ctx.fillText(label, right - 4, Math.max(y(hz) - 3, top + 12))
+    if (label) {
+      ctx.fillStyle = color
+      ctx.textAlign = 'right'
+      ctx.textBaseline = 'bottom'
+      ctx.fillText(label, right - 4, Math.max(y(hz) - 3, top + 12))
+    }
   }
-  if (lines.spikeHz)
-    dashed(lines.spikeHz, COLORS.spike, `Pitch spike ${lines.spikeHz.toFixed(0)} Hz`)
-  if (lines.silenceDbfs !== null)
-    dashed(
-      lines.silenceDbfs,
-      COLORS.silence,
-      `Not speaking below ${lines.silenceDbfs.toFixed(0)} dBFS`
-    )
+  if (lines.spikeHz && lines.typicalHz) {
+    const lowHz = lines.typicalHz ** 2 / lines.spikeHz
+    dashed(lines.spikeHz, COLORS.spike)
+    dashed(lowHz, COLORS.spike)
+  }
+  if (lines.silenceDbfs !== null) dashed(lines.silenceDbfs, COLORS.silence)
   if (lines.typicalHz)
-    dashed(
-      lines.typicalHz,
-      COLORS.typical,
-      `Typical ${lines.typicalHz.toFixed(0)} Hz (last 10 s of speech)`
-    )
+    dashed(lines.typicalHz, COLORS.typical)
+  if (lines.typicalDbfs !== null) dashed(lines.typicalDbfs, COLORS.typical)
+  if (lines.quietDbfs !== null) dashed(lines.quietDbfs, COLORS.spike)
   if (lines.desiredWpm)
     dashed(lines.desiredWpm, COLORS.typical, `Desired ${lines.desiredWpm.toFixed(0)} WPM`)
 
@@ -184,12 +209,17 @@ function render(
   ctx.lineJoin = 'round'
   ctx.beginPath()
   const dots: { x: number; y: number }[] = []
-  let prev: { t: number; x: number; y: number } | null = null
+  let prev: { t: number; x: number; y: number; value: number } | null = null
   let segmentHasLine = false
   for (const s of samples) {
     if (s.t < start - joinSeconds || s.value === null) continue
-    const point = { t: s.t, x: x(s.t), y: y(s.value) }
-    if (prev && s.t - prev.t <= joinSeconds) {
+    const point = { t: s.t, x: x(s.t), y: y(s.value), value: s.value }
+    const gap = prev ? s.t - prev.t : Infinity
+    // Across missing pitch readings, bridge nearby frequencies without drawing a false jump.
+    if (
+      prev && gap <= joinSeconds &&
+      (metric !== 'pitch' || gap <= 0.075 || Math.abs(12 * Math.log2(s.value / prev.value)) <= 5)
+    ) {
       ctx.lineTo(point.x, point.y)
       segmentHasLine = true
     } else {

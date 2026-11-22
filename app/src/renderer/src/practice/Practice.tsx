@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { PracticeFolder, PracticeLibrary } from '../../../main/practiceLibrary'
 import FolderSelect from '../menu/FolderSelect'
-import type { SessionScoreMessage } from './audio/audioProtocol'
+import type { SessionScoreMessage, VoiceBaseline } from './audio/audioProtocol'
 import { useAudioAnalysis } from './audio/useAudioAnalysis'
 import CameraPreview from './components/CameraPreview'
 import MicrophoneMeter from './components/MicrophoneMeter'
@@ -18,7 +18,9 @@ export default function Practice({
   folders,
   initialFolderId,
   onFolderChange,
-  onLibraryChange
+  onLibraryChange,
+  voiceBaseline,
+  onOpenCalibration
 }: {
   visible: boolean
   onBusyChange: (busy: boolean) => void
@@ -26,6 +28,8 @@ export default function Practice({
   initialFolderId: string | null
   onFolderChange: (folderId: string | null) => void
   onLibraryChange: (library: PracticeLibrary) => void
+  voiceBaseline: VoiceBaseline | null
+  onOpenCalibration: () => void
 }): React.JSX.Element {
   const [calibrated, setCalibrated] = useState(false)
   const session = usePracticeSession(calibrated)
@@ -37,7 +41,7 @@ export default function Practice({
   const { running, finished, camera, microphone, cameraStream, micStream, pending } = session
   const [script, setScript] = useState('') // optional; empty = no script tracking
   const [targetMinutes, setTargetMinutes] = useState<number | null>(null) // time the user has
-  const speech = useAudioAnalysis(micStream, script, targetMinutes, session.startedAt)
+  const speech = useAudioAnalysis(micStream, script, targetMinutes, session.startedAt, voiceBaseline)
   const busy = running || session.preparing || session.saving || finishing
   useEffect(() => onBusyChange(busy), [busy, onBusyChange])
 
@@ -81,6 +85,14 @@ export default function Practice({
           {running ? 'In progress' : finished ? 'Session complete' : 'Ready to practice'}
         </span>
       </header>
+      {!voiceBaseline && !busy && (
+        <p>
+          <button className="ph-script-button" type="button" onClick={onOpenCalibration}>
+            Calibrate voice
+          </button>{' '}
+          to enable pitch and volume grading.
+        </p>
+      )}
       <div className="ph-practice-folder">
         <FolderSelect
           folders={folders}
@@ -99,6 +111,7 @@ export default function Practice({
           camera={camera}
           pending={pending}
           running={running || session.preparing}
+          voiceAlerts={running ? speech.voice?.alerts : undefined}
           logWebcam={session.logWebcam}
           wpm={speech.wpm}
           wpmUpdatedAt={speech.wpmUpdatedAt}

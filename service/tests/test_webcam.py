@@ -1,5 +1,6 @@
 import math
 
+from presentation_service.scoring import score_presentation
 from presentation_service.webcam_analysis import WebcamAnalyzer
 
 FPS = 30
@@ -53,6 +54,26 @@ def test_state_shape_and_lines():
 def test_face_missing_alert_after_1s():
     first, _ = run(WebcamAnalyzer(), 4, face=lambda t: t < 2)
     assert first.get("Face the camera") == 3.0
+
+
+def test_one_sustained_face_absence_deducts_body_language_points():
+    a = WebcamAnalyzer()
+    a.start_scoring()
+    run(a, 4, face=lambda t: t < 2)
+    assert a.incidents["face"] == 1
+
+    report = score_presentation(body_incidents=a.incidents, duration_seconds=300)
+    face = report["categories"]["body_language"]["checks"]["face"]
+    assert face["deduction"] == face["max_points"] == 3
+
+
+def test_repeated_body_language_failures_lose_all_credit_for_the_check():
+    report = score_presentation(body_incidents={"look_down": 1, "tilt": 2, "fast": 0},
+                                duration_seconds=600)
+    checks = report["categories"]["body_language"]["checks"]
+    assert checks["look_down"]["deduction"] == 2.25
+    assert checks["tilt"]["deduction"] == 1.5
+    assert checks["fast"]["deduction"] == 0
 
 
 def test_calibration_countdown_then_rest_circles_and_use_your_hands():
