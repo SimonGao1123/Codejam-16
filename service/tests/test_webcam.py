@@ -328,6 +328,24 @@ def test_leaving_the_frame_while_recording_starts_over():
     assert states[-1][1]["calibrated"]
 
 
+def test_last_moment_movement_cannot_restart_a_completed_calibration():
+    a = WebcamAnalyzer()
+    a.calibrate(0.0, delay=0, duration=3, when_ready=True, request_id="camera-1")
+    run_states(a, 0.0, 3.3)
+    deadline = a.calib.until
+    a.process(frame(deadline - 0.39, face=False))
+    assert a.process(frame(deadline - 0.01, face=False))["calibration"]["phase"] == "recording"
+    done = a.process(frame(deadline + 0.02, face=False))["calibration"]
+    assert done["phase"] == "idle" and done["calibrated"]
+    assert done["request_id"] == "camera-1"
+
+    # A reconnect can resend the same request without discarding the baseline.
+    a.calibrate(deadline + 0.03, when_ready=True, request_id="camera-1")
+    assert a.process(frame(deadline + 0.04))["calibration"]["calibrated"]
+    a.calibrate(deadline + 0.05, when_ready=True, request_id="camera-2")
+    assert a.process(frame(deadline + 0.06))["calibration"]["phase"] == "arming"
+
+
 def test_no_alerts_or_scoring_while_waiting_to_calibrate():
     a = WebcamAnalyzer()
     a.start_scoring()
