@@ -17,6 +17,7 @@ type Props = {
   silenceDbfs?: number | null // volume graph: below this the speaker counts as not speaking
   desiredWpm?: number | null // pace graph: the pace to aim for
   durationS?: number | null // fixed window from the first sample (e.g. a 6 s recording); time axis counts up
+  baselineLabel?: string
   live: boolean // false: freeze on the last reading (session ended)
 }
 
@@ -49,10 +50,20 @@ export default function VoiceGraph({
   silenceDbfs = null,
   desiredWpm = null,
   durationS = null,
+  baselineLabel = 'Calibrated',
   live
 }: Props): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const linesRef = useRef({ typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, durationS, live })
+  const linesRef = useRef({
+    typicalHz,
+    spikeHz,
+    typicalDbfs,
+    quietDbfs,
+    silenceDbfs,
+    desiredWpm,
+    durationS,
+    live
+  })
 
   useEffect(() => {
     linesRef.current = { typicalHz, spikeHz, typicalDbfs, quietDbfs, silenceDbfs, desiredWpm, durationS, live }
@@ -90,13 +101,21 @@ export default function VoiceGraph({
       />
       {metric === 'pitch' && typicalHz && spikeHz && lowHz && (
         <div className="ph-pitch-legend">
-          <span>Calibrated pitch {Math.round(typicalHz)} Hz</span>
-          <span>Acceptable range {Math.round(lowHz)}–{Math.round(spikeHz)} Hz</span>
+          <span>
+            {baselineLabel} pitch {Math.round(typicalHz)} Hz
+          </span>
+          <span>
+            Acceptable range {Math.round(lowHz)}–{Math.round(spikeHz)} Hz
+          </span>
         </div>
       )}
       {metric === 'volume' && (typicalDbfs !== null || silenceDbfs !== null) && (
         <div className="ph-pitch-legend">
-          {typicalDbfs !== null && <span>Calibrated volume {Math.round(typicalDbfs)} dBFS</span>}
+          {typicalDbfs !== null && (
+            <span>
+              {baselineLabel} volume {Math.round(typicalDbfs)} dBFS
+            </span>
+          )}
           {quietDbfs !== null && <span>Quiet speech threshold {Math.round(quietDbfs)} dBFS</span>}
           {silenceDbfs !== null && <span>Speech cutoff {Math.round(silenceDbfs)} dBFS</span>}
         </div>
@@ -201,8 +220,7 @@ function render(
     dashed(lowHz, COLORS.spike)
   }
   if (lines.silenceDbfs !== null) dashed(lines.silenceDbfs, COLORS.silence)
-  if (lines.typicalHz)
-    dashed(lines.typicalHz, COLORS.typical)
+  if (lines.typicalHz) dashed(lines.typicalHz, COLORS.typical)
   if (lines.typicalDbfs !== null) dashed(lines.typicalDbfs, COLORS.typical)
   if (lines.quietDbfs !== null) dashed(lines.quietDbfs, COLORS.spike)
   if (lines.desiredWpm)
@@ -227,7 +245,8 @@ function render(
     const gap = prev ? s.t - prev.t : Infinity
     // Across missing pitch readings, bridge nearby frequencies without drawing a false jump.
     if (
-      prev && gap <= joinSeconds &&
+      prev &&
+      gap <= joinSeconds &&
       (metric !== 'pitch' || gap <= 0.075 || Math.abs(12 * Math.log2(s.value / prev.value)) <= 5)
     ) {
       ctx.lineTo(point.x, point.y)

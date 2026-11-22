@@ -1,11 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAlertPreferences } from '../liveAlert/useAlertPreferences'
-import type { SessionScoreMessage } from '../practice/audio/audioProtocol'
+import {
+  FILLER_WORDS,
+  type AudioServerMessage,
+  type AudioChunkProcessedMessage,
+  type FillerWord,
+  type SessionScoreMessage,
+  type TranscriptMessage,
+  type VoiceMessage
+} from '../practice/audio/audioProtocol'
 import { createLandmarkers, detect, type Landmarkers } from '../practice/camera/webcamLandmarkers'
+import type { VoiceSample } from '../practice/components/VoiceGraph'
 import { pdfText } from '../practice/script/pdfText'
 import SessionResults from '../practice/components/SessionResults'
 import PresentationPlayback from '../practice/components/PresentationPlayback'
+import TranscriptPanel, { type TranscriptAnalysis } from '../practice/components/TranscriptPanel'
 import './upload.css'
+
+const EMPTY_FILLERS = Object.fromEntries(FILLER_WORDS.map((word) => [word, 0])) as Record<
+  FillerWord,
+  number
+>
+const GRAPH_WINDOW_S = 16
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60)
@@ -33,11 +49,84 @@ export default function UploadGrade(): React.JSX.Element {
   const [statusText, setStatusText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [score, setScore] = useState<SessionScoreMessage | null>(null)
+  const [analysisConnected, setAnalysisConnected] = useState(false)
+  const [sentences, setSentences] = useState<string[]>([])
+  const [partial, setPartial] = useState('')
+  const [fillers, setFillers] = useState<Record<FillerWord, number>>(EMPTY_FILLERS)
+  const [fillerTotal, setFillerTotal] = useState(0)
+  const [voice, setVoice] = useState<VoiceMessage | null>(null)
+  const [wpm, setWpm] = useState<number | null>(null)
+  const [averageWpm, setAverageWpm] = useState<number | null>(null)
+  const [desiredWpm, setDesiredWpm] = useState<number | null>(null)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pdfInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef(false)
+  const pitchSamples = useRef<VoiceSample[]>([])
+  const volumeSamples = useRef<VoiceSample[]>([])
+  const wpmSamples = useRef<VoiceSample[]>([])
+
+  const uploadSpeech: TranscriptAnalysis = {
+    connected: analysisConnected,
+    listening: processing,
+    sentences,
+    partial,
+    fillers,
+    total: fillerTotal,
+    flash: {},
+    voice,
+    pitch: pitchSamples,
+    volume: volumeSamples,
+    wpmSamples,
+    wpm,
+    avgWpm: averageWpm,
+    desiredWpm
+  }
+
+  const resetAudioResults = (): void => {
+    setAnalysisConnected(false)
+    setSentences([])
+    setPartial('')
+    setFillers(EMPTY_FILLERS)
+    setFillerTotal(0)
+    setVoice(null)
+    setWpm(null)
+    setAverageWpm(null)
+    setDesiredWpm(null)
+    pitchSamples.current = []
+    volumeSamples.current = []
+    wpmSamples.current = []
+  }
+
+  const applyVoice = (message: VoiceMessage): void => {
+    setVoice(message)
+    const capturedAt = message.captured_at
+    if (capturedAt == null) return
+    setWpm(message.wpm)
+    message.pitches.forEach((value, index) => {
+      pitchSamples.current.push({
+        t: message.pitch_times?.[index] ?? capturedAt - (message.pitches.length - 1 - index) * 0.05,
+        value
+      })
+    })
+    volumeSamples.current.push({ t: capturedAt, value: message.volume_dbfs })
+    wpmSamples.current.push({ t: capturedAt, value: message.wpm })
+    for (const samples of [pitchSamples.current, volumeSamples.current]) {
+      while (samples.length && samples[0].t < capturedAt - GRAPH_WINDOW_S) samples.shift()
+    }
+  }
+
+  const applyTranscript = (message: TranscriptMessage): void => {
+    if (message.new_sentences.length)
+      setSentences((current) => [...current, ...message.new_sentences])
+    setPartial(message.partial)
+    setFillers(message.fillers)
+    setFillerTotal(message.total)
+    setWpm(message.wpm)
+    setAverageWpm(message.avg_wpm ?? null)
+    if (message.desired_wpm !== undefined) setDesiredWpm(message.desired_wpm)
+  }
 
   // Clean up object URL when component unmounts or file changes
   useEffect(() => {
@@ -54,6 +143,7 @@ export default function UploadGrade(): React.JSX.Element {
     setScore(null)
     setProgress(0)
     setStatusText('')
+    resetAudioResults()
 
     // Use the range-capable Electron protocol used by live recordings. The blob fallback keeps the
     // upload page usable in a plain browser during development.
@@ -144,6 +234,7 @@ export default function UploadGrade(): React.JSX.Element {
     setProcessing(true)
     setError(null)
     setScore(null)
+    resetAudioResults()
     setProgress(0)
     setStatusText('Preparing file...')
     abortRef.current = false
@@ -153,6 +244,10 @@ export default function UploadGrade(): React.JSX.Element {
     let audioWs: WebSocket | null = null
     let webcamWs: WebSocket | null = null
     let audioCtx: AudioContext | null = null
+    const audioAckWaiters = new Map<
+      number,
+      { resolve: () => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }
+    >()
 
     try {
       // 1. Decode audio track to 16 kHz mono Float32 PCM
@@ -250,17 +345,22 @@ export default function UploadGrade(): React.JSX.Element {
       }
 
       // 3. Set up session control messages
-      let markSessionStarted: (() => void) | null = null
-      const sessionStarted = new Promise<void>((resolve) => {
-        markSessionStarted = resolve
-      })
       const scorePromise = new Promise<SessionScoreMessage>((resolve, reject) => {
         if (!audioWs) return reject(new Error('No audio socket'))
         audioWs.onmessage = (event): void => {
           try {
-            const msg = JSON.parse(event.data)
-            if (msg.type === 'session_started') markSessionStarted?.()
-            if (msg.type === 'session_score') {
+            const msg = JSON.parse(event.data) as AudioServerMessage | AudioChunkProcessedMessage
+            if (msg.type === 'voice') applyVoice(msg)
+            else if (msg.type === 'transcript') applyTranscript(msg)
+            else if (msg.type === 'pace_target') setDesiredWpm(msg.desired_wpm)
+            else if (msg.type === 'audio_processed') {
+              const waiter = audioAckWaiters.get(msg.id)
+              if (waiter) {
+                clearTimeout(waiter.timer)
+                audioAckWaiters.delete(msg.id)
+                waiter.resolve()
+              }
+            } else if (msg.type === 'session_score') {
               resolve(msg)
             }
           } catch (e) {
@@ -276,14 +376,18 @@ export default function UploadGrade(): React.JSX.Element {
           seconds: targetMinutes && targetMinutes > 0 ? targetMinutes * 60 : null
         })
       )
-      audioWs.send(JSON.stringify({ type: 'noise_floor', dbfs: -60.0 }))
-      audioWs.send(JSON.stringify({ type: 'session_start', started_at: 0.0, mode: 'recording' }))
-      await Promise.race([
-        sessionStarted,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Timed out starting body-language analysis')), 5000)
-        )
-      ])
+      // Uploaded recordings establish their own pitch and volume baseline. Their codec gain and
+      // microphone setup should not be compared with a saved live-microphone calibration.
+      audioWs.send(JSON.stringify({ type: 'noise_floor', dbfs: null }))
+      audioWs.send(
+        JSON.stringify({
+          type: 'session_start',
+          started_at: 0.0,
+          voice_baseline: null,
+          recording_baseline: true
+        })
+      )
+      setAnalysisConnected(true)
 
       // 4. Stream audio and video frames in stepped slices
       const duration = Math.max(
@@ -295,6 +399,16 @@ export default function UploadGrade(): React.JSX.Element {
       const stepSeconds = 0.2 // 5 fps (fast and accurate for hand gestures and eye level)
       const samplesPerStep = Math.round(stepSeconds * 16000)
       const totalSteps = Math.ceil(duration / stepSeconds)
+      let nextAudioChunkId = 0
+
+      const waitForAudioProcessed = (id: number): Promise<void> =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            audioAckWaiters.delete(id)
+            reject(new Error('Timed out waiting for the transcription service to process audio'))
+          }, 15_000)
+          audioAckWaiters.set(id, { resolve, reject, timer })
+        })
 
       const seekVideo = (videoEl: HTMLVideoElement, targetTime: number): Promise<void> =>
         new Promise((resolve, reject) => {
@@ -353,7 +467,12 @@ export default function UploadGrade(): React.JSX.Element {
             const buffer = new ArrayBuffer(Float64Array.BYTES_PER_ELEMENT + chunk.byteLength)
             new DataView(buffer).setFloat64(0, t, true)
             new Float32Array(buffer, Float64Array.BYTES_PER_ELEMENT).set(chunk)
+            const chunkId = nextAudioChunkId++
             audioWs.send(buffer)
+            // Do not let a fast file upload queue minutes of audio ahead of the streaming model.
+            // The service replies only after it has processed this ordered binary chunk.
+            audioWs.send(JSON.stringify({ type: 'audio_sync', id: chunkId }))
+            await waitForAudioProcessed(chunkId)
           }
         }
 
@@ -364,15 +483,8 @@ export default function UploadGrade(): React.JSX.Element {
           `Analyzing presentation... ${pct}% (${formatTime(t)} / ${formatTime(duration)})`
         )
 
-        // Give the UI thread time to render progress and flush WebSocket buffers
-        if (
-          audioWs.bufferedAmount > 128 * 1024 ||
-          (webcamWs && webcamWs.bufferedAmount > 128 * 1024)
-        ) {
-          await new Promise((r) => setTimeout(r, 20))
-        } else {
-          await new Promise((r) => setTimeout(r, 8))
-        }
+        // Yield so progress and the video preview can paint between steps.
+        await new Promise((resolve) => setTimeout(resolve, 0))
       }
 
       // Reset the preview video so it releases active decoding and returns to t=0
@@ -410,11 +522,12 @@ export default function UploadGrade(): React.JSX.Element {
         audioWs.send(JSON.stringify({ type: 'session_end', duration_seconds: duration }))
       }
 
-      // Wait for score response with 15s timeout
+      // Transcription and script comparison finish after the final audio chunk, so use the same
+      // generous result timeout as a live practice session.
       const finalScore = await Promise.race([
         scorePromise,
         new Promise<SessionScoreMessage>((_, reject) =>
-          setTimeout(() => reject(new Error('Timed out waiting for session score')), 15000)
+          setTimeout(() => reject(new Error('Timed out waiting for session score')), 30000)
         )
       ])
 
@@ -426,6 +539,11 @@ export default function UploadGrade(): React.JSX.Element {
       console.error('Processing error:', err)
       setError(err instanceof Error ? err.message : String(err))
     } finally {
+      for (const waiter of audioAckWaiters.values()) {
+        clearTimeout(waiter.timer)
+        waiter.reject(new Error('Audio analysis stopped'))
+      }
+      audioAckWaiters.clear()
       landmarkers?.close()
       webcamWs?.close()
       audioWs?.close()
@@ -644,6 +762,11 @@ export default function UploadGrade(): React.JSX.Element {
               checkpoints={score.checkpoints ?? []}
             />
           )}
+          <TranscriptPanel
+            speech={uploadSpeech}
+            running={false}
+            completedLabel="Uploaded recording"
+          />
         </div>
       )}
     </main>

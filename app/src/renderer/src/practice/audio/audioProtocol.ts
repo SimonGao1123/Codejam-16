@@ -17,13 +17,18 @@ export interface VoiceBaseline {
 // ---- Electron -> Python (besides the binary audio)
 
 export type AudioControlMessage =
-  | { type: 'session_start'; started_at: number; voice_baseline: VoiceBaseline | null }
+  | {
+      type: 'session_start'
+      started_at: number
+      voice_baseline: VoiceBaseline | null
+      recording_baseline?: boolean
+    }
   | { type: 'session_end' } // practice ended: Python sends the final transcript and score
   | ScriptControlMessage
   | TargetTimeMessage
   // the room's noise level, measured while the user stood still during the get-ready countdown;
   // Python counts audio up to ~10 dB above it as "not speaking". Sent just before session_start.
-  | { type: 'noise_floor'; dbfs: number }
+  | { type: 'noise_floor'; dbfs: number | null }
 
 /** The user's script (pasted or read from a PDF); null / empty = no script, comparison off.
  *  Python compares the transcript with it and keeps it across sessions until it changes. */
@@ -55,6 +60,7 @@ export interface VoiceMessage {
   volume_dbfs: number
   typical_hz: number | null // fixed pitch from voice calibration
   typical_volume_dbfs: number | null // fixed volume from voice calibration
+  baseline_source?: 'calibration' | 'recording' | null
   quiet_limit_dbfs?: number | null
   spike_hz: number | null // upper pitch limit; the lower limit is the same interval below typical_hz
   speaking: boolean // louder than the room's silence level
@@ -83,6 +89,12 @@ export interface PaceTargetMessage {
   source: PaceSource
   script_words: number
   target_seconds: number | null
+}
+
+/** Acknowledges an upload audio chunk after the service has handed it to the analyzer. */
+export interface AudioChunkProcessedMessage {
+  type: 'audio_processed'
+  id: number
 }
 
 export interface ScriptLoadedMessage {
@@ -148,4 +160,5 @@ export type AudioServerMessage =
   | ScriptLoadedMessage
   | ScriptPositionMessage
   | PaceTargetMessage
+  | AudioChunkProcessedMessage
   | SessionScoreMessage

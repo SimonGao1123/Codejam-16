@@ -13,7 +13,7 @@ from presentation_service.audio_analysis import AudioAnalyzer
 from presentation_service.scoring import BODY_RULES, VOICE_RULES, score_presentation
 from presentation_service.server import AlertBoard, Session, audio_connection, voice_calibration_connection
 from presentation_service.transcript import load_moonshine
-from presentation_service.voice import CALIBRATION_SECONDS, pitch_hz
+from presentation_service.voice import BLOCK_SIZE, CALIBRATION_SECONDS, VoiceMonitor, pitch_hz
 
 SR = 16000
 
@@ -178,6 +178,26 @@ def test_uncalibrated_voice_is_measured_without_pitch_or_volume_deductions():
     feed_all(a, tone)
     assert not {"pitch", "volume", "quiet"} & a.voice_incidents.keys()
     assert "Speak up" not in board.active()
+
+
+def test_recording_baseline_uses_the_uploaded_audio_not_live_calibration():
+    monitor = VoiceMonitor(recording_baseline=True)
+
+    def blocks(hz, amplitude, seconds):
+        samples = amplitude * np.sin(2 * np.pi * hz * np.arange(round(SR * seconds)) / SR)
+        return [samples[i:i + BLOCK_SIZE] for i in range(0, len(samples), BLOCK_SIZE)]
+
+    # The first 1.5 seconds establish this recording's own normal pitch and level.
+    for block in blocks(200, 0.02, 1.5):
+        monitor.process(block, 0)
+    assert monitor.typical_pitch_hz == pytest.approx(200, abs=3)
+    assert monitor.typical_volume_dbfs == pytest.approx(-37, abs=1)
+    assert monitor.baseline_source == "recording"
+
+    # The same quiet recording level is normal; only a sustained change relative to it is flagged.
+    assert not any(monitor.process(block, 0) for block in blocks(200, 0.02, 0.5))
+    alerts = [alert for block in blocks(320, 0.2, 0.5) for alert in monitor.process(block, 0)]
+    assert VoiceMonitor.PITCH_SPIKE in alerts and VoiceMonitor.VOLUME_SPIKE in alerts
 
 
 def test_fillers_are_scored_per_minute():

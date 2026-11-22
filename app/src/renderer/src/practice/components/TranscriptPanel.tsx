@@ -7,12 +7,36 @@ import type { AudioAnalysis } from '../audio/useAudioAnalysis'
 import { FILLER_WORDS } from '../audio/audioProtocol'
 import VoiceGraph from './VoiceGraph'
 
+/** The subset of live audio state needed to render a transcript and its three graphs. */
+export type TranscriptAnalysis = Pick<
+  AudioAnalysis,
+  | 'connected'
+  | 'listening'
+  | 'sentences'
+  | 'partial'
+  | 'fillers'
+  | 'total'
+  | 'flash'
+  | 'voice'
+  | 'pitch'
+  | 'volume'
+  | 'wpmSamples'
+  | 'wpm'
+  | 'avgWpm'
+  | 'desiredWpm'
+>
+
 type Props = {
-  speech: AudioAnalysis
+  speech: TranscriptAnalysis
   running: boolean
+  completedLabel?: string
 }
 
-export default function TranscriptPanel({ speech, running }: Props): React.JSX.Element {
+export default function TranscriptPanel({
+  speech,
+  running,
+  completedLabel
+}: Props): React.JSX.Element {
   const { connected, listening, sentences, partial, fillers, total, flash, voice } = speech
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -36,7 +60,8 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
                 : 'No pitch detected'
               : listening
                 ? 'Waiting for audio'
-                : voice ? 'Last practice session' : 'Starts with your practice session'}
+                : (completedLabel ??
+                  (voice ? 'Last practice session' : 'Starts with your practice session'))}
           </span>
         </div>
         <VoiceGraph
@@ -44,6 +69,9 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
           samples={speech.pitch}
           typicalHz={voice?.typical_hz ?? null}
           spikeHz={voice?.spike_hz ?? null}
+          baselineLabel={
+            voice?.baseline_source === 'recording' ? 'Recording baseline' : 'Calibrated'
+          }
           live={listening}
         />
       </section>
@@ -58,6 +86,9 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
           typicalDbfs={voice?.typical_volume_dbfs ?? null}
           quietDbfs={voice?.quiet_limit_dbfs ?? null}
           silenceDbfs={voice?.silence_dbfs ?? null}
+          baselineLabel={
+            voice?.baseline_source === 'recording' ? 'Recording baseline' : 'Calibrated'
+          }
           live={listening}
         />
       </section>
@@ -88,9 +119,8 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
                 ? voice?.pitch_hz
                   ? `Listening · ${voice.pitch_hz.toFixed(0)} Hz · ${voice.volume_dbfs.toFixed(0)} dBFS`
                   : 'Listening'
-                : running
-                  ? 'Microphone off'
-                  : 'Starts with your practice session'}
+                : (completedLabel ??
+                  (running ? 'Microphone off' : 'Starts with your practice session'))}
           </span>
         </div>
         <div className="ph-fillers" aria-label={`Filler words: ${total}`}>

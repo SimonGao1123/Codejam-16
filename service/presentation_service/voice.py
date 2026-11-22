@@ -28,6 +28,10 @@ MIN_PITCH_LAG = SAMPLE_RATE // 450
 MAX_PITCH_LAG = SAMPLE_RATE // 70
 PITCH_PEAK_TOLERANCE = 0.02
 HARMONIC_CONFIRM_BLOCKS = 3
+# Uploaded recordings cannot use the user's microphone calibration: codec gain and the recording
+# setup can change the apparent level. Learn a robust reference from the first 1.5 s of voiced
+# recording instead, then judge subsequent changes relative to that recording.
+RECORDING_BASELINE_BLOCKS = 30
 
 
 def pitch_hz(samples, *, min_confidence=0.62):
@@ -146,7 +150,7 @@ class VoiceMonitor:
 
     def __init__(self, quiet_drop_db=8.0, noise_floor_dbfs=DEFAULT_NOISE_FLOOR_DBFS,
                  quiet_seconds=0.7, volume_jump_db=6.0, pitch_jump_semitones=6.0, pause_seconds=5.0,
-                 baseline=None):
+                 baseline=None, recording_baseline=False):
         self.quiet_drop_db = quiet_drop_db
         self.noise_floor_dbfs = noise_floor_dbfs
         self.volume_jump_db = volume_jump_db
@@ -154,6 +158,13 @@ class VoiceMonitor:
         self.latest_pitch_hz = None
         self.latest_volume_dbfs = None
         self.typical_pitch_hz, self.typical_volume_dbfs = baseline or (None, None)
+        self.baseline_source = "calibration" if baseline else ("recording" if recording_baseline else None)
+        self.learn_recording_baseline = recording_baseline and baseline is None
+        self.recording_pitches, self.recording_volumes = [], []
+        if self.learn_recording_baseline:
+            # A recording's gain may be much quieter than the live microphone. Until its own
+            # reference is known, allow pitch detection down to the conservative hard floor.
+            self.noise_floor_dbfs = QUIET_PITCH_FLOOR_DBFS
         if self.typical_volume_dbfs is not None:
             self.noise_floor_dbfs = min(
                 self.noise_floor_dbfs, max(MIN_CALIBRATION_DBFS, self.typical_volume_dbfs - 6)
@@ -219,6 +230,17 @@ class VoiceMonitor:
         self.speaking = volume >= gate or pitch is not None
         self.latest_pitch_hz = pitch
         self.latest_volume_dbfs = volume
+        if self.learn_recording_baseline and pitch is not None:
+            self.recording_pitches.append(pitch)
+            self.recording_volumes.append(volume)
+            if len(self.recording_pitches) >= RECORDING_BASELINE_BLOCKS:
+                self.typical_pitch_hz = float(median(self.recording_pitches))
+                self.typical_volume_dbfs = float(median(self.recording_volumes))
+                self.learn_recording_baseline = False
+                self.noise_floor_dbfs = min(
+                    self.noise_floor_dbfs,
+                    max(MIN_CALIBRATION_DBFS, self.typical_volume_dbfs - 6),
+                )
         return pitch, volume
 
     def process(self, samples, elapsed_seconds):
