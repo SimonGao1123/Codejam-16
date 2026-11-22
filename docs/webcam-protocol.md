@@ -39,14 +39,16 @@ countdown, speeds) instead of the wall clock, so recorded sessions replay identi
 ### `calibrate`: sent automatically at the start of every practice session
 
 ```json
-{ "type": "calibrate", "t": 12.345, "delay": 0, "duration": 3, "when_ready": true }
+{ "type": "calibrate", "t": 12.345, "delay": 0, "duration": 3, "when_ready": true, "request_id": "camera-stream-id" }
 ```
 
 There's no manual calibration. At the start of each session (including "Start another session")
 the app sends this as soon as frames are analysed and the service is connected, during the
 get-ready countdown. The session itself (`session_start`: timer, recording, audio analysis,
 scoring) only starts once both the countdown and this calibration are done; until then the app
-offers Cancel. With
+offers Cancel. `calibration.request_id` identifies the matching camera stream. Once the
+calibration window ends, the service commits the baseline before processing later movement.
+With
 `when_ready`, the service **waits** (phase `arming`) until the face and both shoulders are in
 frame and the speaker holds fairly still for 0.75 s, then records 3 s of shoulder tilt, head pitch,
 and eye gaze. When **Hands not visible** is enabled at session start, both hands must also be in

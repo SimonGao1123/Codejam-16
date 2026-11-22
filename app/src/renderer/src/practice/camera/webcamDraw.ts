@@ -144,7 +144,7 @@ export function drawOverlay(
   }
   if (cal.phase === 'waiting') countdown(ctx, Math.ceil(cal.remaining), 'Get into position')
   if (cal.phase === 'recording')
-    countdown(ctx, Math.ceil(cal.remaining), 'Stand still in your resting position')
+    countdown(ctx, Math.max(1, Math.ceil(cal.remaining)), 'Stand still in your resting position')
 }
 
 // Alert look, matching the Live alerts preview (.la-cue in liveAlerts.css)

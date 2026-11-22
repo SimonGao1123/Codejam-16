@@ -44,6 +44,7 @@ export interface CalibrateMessage {
   delay?: number // seconds before recording (default 2); 0 for the automatic one at session start
   duration?: number // seconds of recording (default 2)
   when_ready?: boolean // wait until the face, shoulders and both hands are in frame and still
+  request_id?: string // identifies the camera stream requesting calibration
 }
 
 export interface SettingsMessage {
@@ -81,6 +82,7 @@ export interface CalibrationState {
   phase: 'idle' | 'arming' | 'waiting' | 'recording'
   remaining: number // seconds left in the current phase (0 when idle)
   calibrated: boolean
+  request_id?: string | null
   message: string
 }
 
