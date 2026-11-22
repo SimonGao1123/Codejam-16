@@ -20,6 +20,7 @@ type Props = {
   endPractice: () => void
   waitingForCalibration: boolean // countdown done, waiting for the camera calibration
   cancelPractice: () => void
+  voiceCalibrated: boolean // true once the user has saved a voice calibration
 }
 
 export default function SessionControls({
@@ -38,8 +39,13 @@ export default function SessionControls({
   startPractice,
   endPractice,
   waitingForCalibration,
-  cancelPractice
+  cancelPractice,
+  voiceCalibrated
 }: Props): React.JSX.Element {
+  // Only the "start" states (Start practice / Start another session) need a voice calibration.
+  // "Stop presenting" and "Cancel" must keep working.
+  const blockedByVoice = !running && !waitingForCalibration && !voiceCalibrated
+
   let actionLabel = finished ? 'Start another session' : 'Start practice'
   if (running) actionLabel = 'Stop presenting'
   if (preparing) actionLabel = 'Getting ready…'
@@ -89,10 +95,16 @@ export default function SessionControls({
           {deviceError}
         </p>
       )}
+      {blockedByVoice && (
+        <p id="ph-voice-hint" className="ph-hint" role="status">
+          Calibrate your voice first to start a session.
+        </p>
+      )}
       <button
         className="ph-session-action"
         data-active={running}
-        disabled={(preparing && !waitingForCalibration) || saving || finishing}
+        disabled={(preparing && !waitingForCalibration) || saving || finishing || blockedByVoice}
+        aria-describedby={blockedByVoice ? 'ph-voice-hint' : undefined}
         onClick={
           running
             ? endPractice
