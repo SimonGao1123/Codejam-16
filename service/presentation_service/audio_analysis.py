@@ -24,6 +24,7 @@ SCRIPT_RULES = {"jump": "out_of_order", "back": "out_of_order", "off_topic": "of
 SCRIPT_CHECK_S = 1.5            # compare the transcript with the script at most this often
 SPEECH_MARGIN_DB = 10           # louder than the room's measured noise by this much = speaking
 SILENCE_LIMITS_DBFS = (-70.0, -30.0)   # keep the "not speaking" level sane if the measurement was off
+QUIET_SPEECH_HEADROOM_DB = 12   # reserve a range where quiet audio can count without a pitch reading
 VOLUME_MIN_SPEECH_S = 5         # volume is scored once there's this much voiced speech
 VOLUME_SEGMENT_S = 10           # volume steadiness compares the level of each 10 s of speech
 PACE_PAUSE_BREAK_S = 1           # deliberate presentation pauses do not lower the final pace score
@@ -51,6 +52,7 @@ class AudioAnalyzer:
         """Live alerts settings for the voice, filler and script rules."""
         self.settings = rules
         self._configure_voice()
+        self._configure_silence()
         self._configure_script()
 
     def _configure_script(self):
@@ -165,13 +167,19 @@ class AudioAnalyzer:
         self._configure_silence()
 
     def _configure_silence(self):
+        if self.noise_floor is None:
+            self.voice.silence_dbfs = None
+            return
         lo, hi = SILENCE_LIMITS_DBFS
-        self.voice.silence_dbfs = (None if self.noise_floor is None
-                                   else min(hi, max(lo, self.noise_floor + SPEECH_MARGIN_DB)))
+        cutoff = min(hi, max(lo, self.noise_floor + SPEECH_MARGIN_DB))
+        quiet_limit = self.voice.quiet_limit_dbfs
+        if quiet_limit is not None:
+            cutoff = min(cutoff, max(lo, quiet_limit - QUIET_SPEECH_HEADROOM_DB))
+        self.voice.silence_dbfs = cutoff
 
-    def reset(self):
-        """New practice session: fresh transcript, filler counts and voice baseline."""
-        self.voice = VoiceMonitor()
+    def reset(self, voice_baseline=None):
+        """New practice session with the user's saved voice baseline."""
+        self.voice = VoiceMonitor(baseline=voice_baseline)
         self._configure_voice()                     # a new monitor keeps the Live alerts settings
         self._configure_silence()                   # and the room's measured silence level
         self.transcriber.reset()
@@ -216,8 +224,8 @@ class AudioAnalyzer:
             self.voice_pos += BLOCK_SIZE
             self.blocks += 1
             alerts = self.voice.process(block, self.blocks * BLOCK_SECONDS)
-            self.voice_incidents.setdefault("quiet", 0)
-            if self.voice.typical_volume_dbfs is not None:
+            if self.voice.typical_volume_dbfs is not None and self.voice.speaking:
+                self.voice_incidents.setdefault("quiet", 0)
                 self.voice_incidents.setdefault("volume", 0)
             if self.voice.typical_pitch_hz is not None and self.voice.latest_pitch_hz is not None:
                 self.voice_incidents.setdefault("pitch", 0)
@@ -225,14 +233,16 @@ class AudioAnalyzer:
                 self.voice_incidents.setdefault("pause", 0)
             if self.voice.latest_pitch_hz is not None:
                 self.speech_volumes.append(self.voice.latest_volume_dbfs)
-            for alert in alerts:
-                rule, attribute = VOICE_RULES[alert]
+            for alert, (rule, attribute) in VOICE_RULES.items():
+                detector = getattr(self.voice, attribute)
+                if not detector.new_incident:
+                    continue
                 self.voice_incidents[rule] = self.voice_incidents.get(rule, 0) + 1
-                active_blocks = getattr(self.voice, attribute).active_blocks
-                onset = self._recording_clock(max(0, self.blocks - max(active_blocks, 1)) * BLOCK_SIZE)
+                onset = self._recording_clock((self.blocks - detector.span_blocks) * BLOCK_SIZE)
                 if onset is not None:
                     self.voice_checkpoints.append((onset, "volume" if rule == "pause" else "voice_tone", alert))
-                if self.enabled(rule):
+            for alert in alerts:
+                if self.enabled(VOICE_RULES[alert][0]):
                     self.alerts.post(alert)         # voice rules have their own cooldowns
             p = self.voice.latest_pitch_hz
             self.recent_pitches.append(round(float(p), 1) if p else None)
@@ -425,11 +435,10 @@ class AudioAnalyzer:
             return None
         size = round(VOLUME_SEGMENT_S / BLOCK_SECONDS)
         segments = [median(volumes[i:i + size]) for i in range(0, len(volumes) - size + 1, size)]
-        silence = self.voice.silence_dbfs
         return {
             "speech_dbfs": round(float(median(volumes)), 1),
             "segment_dbfs": [round(float(s), 1) for s in segments],
-            "room_dbfs": None if silence is None else round(silence - SPEECH_MARGIN_DB, 1),
+            "room_dbfs": None if self.noise_floor is None else round(self.noise_floor, 1),
         }
 
     def checkpoints(self):
@@ -459,6 +468,7 @@ class AudioAnalyzer:
         ]
         return {
             "type": "voice",
+            "alerts": self.alerts.active(),
             "captured_at": captured_at,
             "pitch_hz": round(v.latest_pitch_hz, 1) if v.latest_pitch_hz else None,
             "pitches": pitches,                     # one per 50 ms block, oldest first (for the graph)
@@ -467,9 +477,11 @@ class AudioAnalyzer:
             "volume_dbfs": round(float(v.latest_volume_dbfs), 1),
             # reference pitch for the graph, and the pitch where a spike alert would fire
             "typical_hz": round(float(v.typical_pitch_hz), 1) if v.typical_pitch_hz else None,
+            "typical_volume_dbfs": v.typical_volume_dbfs,
+            "quiet_limit_dbfs": v.quiet_limit_dbfs,
             "spike_hz": (round(float(v.typical_pitch_hz) * 2 ** (v.pitch_jump_semitones / 12), 1)
                          if v.typical_pitch_hz else None),
-            "speaking": bool(v.speaking),           # louder than the room's silence level
+            "speaking": bool(v.speaking),           # detectable pitch or audio above the room cutoff
             "silence_dbfs": None if v.silence_dbfs is None else round(float(v.silence_dbfs), 1),
 
         }

@@ -36,7 +36,7 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
                 : 'No pitch detected'
               : listening
                 ? 'Waiting for audio'
-                : 'Starts with your practice session'}
+                : voice ? 'Last practice session' : 'Starts with your practice session'}
           </span>
         </div>
         <VoiceGraph
@@ -55,6 +55,8 @@ export default function TranscriptPanel({ speech, running }: Props): React.JSX.E
         <VoiceGraph
           metric="volume"
           samples={speech.volume}
+          typicalDbfs={voice?.typical_volume_dbfs ?? null}
+          quietDbfs={voice?.quiet_limit_dbfs ?? null}
           silenceDbfs={voice?.silence_dbfs ?? null}
           live={listening}
         />

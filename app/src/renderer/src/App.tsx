@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { PracticeLibrary } from '../../main/practiceLibrary'
+import VoiceCalibration from './calibration/VoiceCalibration'
+import { loadVoiceCalibration, saveVoiceCalibration } from './calibration/calibrationCapture'
 import LiveAlerts from './liveAlert/LiveAlerts'
 import MainMenu from './menu/MainMenu'
 import Practice from './practice/Practice'
@@ -8,7 +10,8 @@ import './practice/practice.css'
 const emptyLibrary: PracticeLibrary = { folders: [], attempts: [] }
 
 function App(): React.JSX.Element {
-  const [page, setPage] = useState<'menu' | 'practice' | 'alerts'>('menu')
+  const [page, setPage] = useState<'menu' | 'practice' | 'alerts' | 'calibration'>('menu')
+  const [voiceBaseline, setVoiceBaseline] = useState(loadVoiceCalibration)
   const [practice, setPractice] = useState<{ key: number; folderId: string | null } | null>(null)
   const [practiceBusy, setPracticeBusy] = useState(false)
   const [folderId, setFolderId] = useState<string | null>(null)
@@ -43,7 +46,7 @@ function App(): React.JSX.Element {
       <header className="ph-bar">
         <div className="ph-brand">
           <span aria-hidden="true" />
-          Presentation Helper
+          Colloquia
         </div>
         <nav aria-label="Main navigation">
           <button
@@ -57,6 +60,13 @@ function App(): React.JSX.Element {
             onClick={() => openPractice()}
           >
             Practice
+          </button>
+          <button
+            aria-current={page === 'calibration' ? 'page' : undefined}
+            disabled={practiceBusy}
+            onClick={() => setPage('calibration')}
+          >
+            Voice calibration
           </button>
           <button
             aria-current={page === 'alerts' ? 'page' : undefined}
@@ -88,10 +98,21 @@ function App(): React.JSX.Element {
             initialFolderId={practice.folderId}
             onLibraryChange={setLibrary}
             onFolderChange={setFolderId}
+            voiceBaseline={voiceBaseline}
+            onOpenCalibration={() => setPage('calibration')}
           />
         )}
       </div>
       <div hidden={page !== 'alerts'}>{page === 'alerts' && <LiveAlerts />}</div>
+      {page === 'calibration' && (
+        <VoiceCalibration
+          baseline={voiceBaseline}
+          onSave={(baseline) => {
+            saveVoiceCalibration(baseline)
+            setVoiceBaseline(baseline)
+          }}
+        />
+      )}
     </div>
   )
 }

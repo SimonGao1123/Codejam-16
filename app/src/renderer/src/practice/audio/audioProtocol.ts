@@ -9,10 +9,15 @@
 export const audioAnalysisUrl = (): string => `ws://127.0.0.1:${window.api.servicePort}/audio`
 export const AUDIO_SAMPLE_RATE = 16000 // binary messages: float32 little-endian, mono
 
+export interface VoiceBaseline {
+  pitch_hz: number
+  volume_dbfs: number
+}
+
 // ---- Electron -> Python (besides the binary audio)
 
 export type AudioControlMessage =
-  | { type: 'session_start'; started_at: number } // renderer monotonic seconds at recording start
+  | { type: 'session_start'; started_at: number; voice_baseline: VoiceBaseline | null }
   | { type: 'session_end' } // practice ended: Python sends the final transcript and score
   | ScriptControlMessage
   | TargetTimeMessage
@@ -41,14 +46,17 @@ export type FillerWord = (typeof FILLER_WORDS)[number] // 'filler?' = sounded li
 
 export interface VoiceMessage {
   type: 'voice' // every 100 ms
+  alerts?: string[] // current audio banners, also available without the camera
   captured_at?: number | null // renderer monotonic seconds of the latest measured sample
   pitch_hz: number | null // null when not voiced (silence, breath)
   pitches: (number | null)[] // every 50 ms reading since the last message, oldest first
   wpm: number | null // provisional WPM from Moonshine's partial words; refreshes every 100 ms
   pitch_times?: (number | null)[] // capture time for each entry in pitches
   volume_dbfs: number
-  typical_hz: number | null // median pitch of the last 10 s of speech (null for the first second)
-  spike_hz: number | null // a "Steady your pitch" alert fires above this
+  typical_hz: number | null // fixed pitch from voice calibration
+  typical_volume_dbfs: number | null // fixed volume from voice calibration
+  quiet_limit_dbfs?: number | null
+  spike_hz: number | null // upper pitch limit; the lower limit is the same interval below typical_hz
   speaking: boolean // louder than the room's silence level
   silence_dbfs: number | null // not speaking below this (null = room not measured)
 }
