@@ -74,8 +74,13 @@ Contains `score` (out of `max_score`, currently 100, or null without measured da
 pace, body language, and script accuracy breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
 with a `category`, `label`, and `at` in seconds from recording start). Voice incidents come from the existing voice detector.
 Webcam incidents use the configured hold durations and count each sustained condition once.
-Body language is worth up to 10 rubric points. One sustained face-visibility failure loses all
-3 points for that check. Other body-language checks lose 75% on the first sustained failure
+Body language is worth up to 10 rubric points, split evenly between hand checks and the rest.
+When **Hands not visible** is enabled, separate losses of hand visibility lasting one second
+by default cost 0.75 points per incident per minute, up to the remaining points for enabled hand
+checks. Sessions under one minute use one minute for this calculation.
+The first two separate framing failures each deduct up to 2.5 measured body-language points.
+Each failure must last for the configured framing duration, which defaults to one second.
+Other body-language checks lose 75% on the first sustained failure
 and all credit on the second, regardless of session length.
 Voice tone is worth up to 6 rubric points. Pitch swings cost both pitch points on the first
 qualifying violation. The default is 6 semitones from the saved reference for 0.3 seconds,

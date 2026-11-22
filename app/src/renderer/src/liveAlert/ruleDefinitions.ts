@@ -125,8 +125,8 @@ export const rules = [
   {
     id: 'face',
     group: 'Posture',
-    name: 'Face not visible',
-    cue: 'Face the camera',
+    name: 'Face and shoulder framing',
+    cue: 'Stay in frame',
     duration: 1,
     cooldown: 0
   },
@@ -135,7 +135,7 @@ export const rules = [
     group: 'Hands',
     name: 'Hands not visible',
     cue: 'Show both hands or step back',
-    duration: 1.5,
+    duration: 1,
     cooldown: 0
   },
   {
