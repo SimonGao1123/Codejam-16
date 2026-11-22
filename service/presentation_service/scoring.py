@@ -18,6 +18,7 @@ Hand visibility deductions are based on incidents per minute.
 """
 
 from collections.abc import Collection, Mapping
+from decimal import ROUND_HALF_UP, Decimal
 
 # Presentations shorter than this are scored as if they were this long, so one
 # slip in a very short clip can't dominate the score.
@@ -25,27 +26,40 @@ MIN_SCORING_MINUTES = 1.0
 # Used when no length is known at all (neither recorded nor expected).
 FALLBACK_MINUTES = 5.0
 
-FILLER_MAX_POINTS = 6
+# Fixed weights: each criterion's share of the 100. A criterion that wasn't measured is left out
+# and the score is the percentage of the measured weight kept. Each criterion's checks add up to
+# its weight (see the rule tables below).
+CATEGORY_WEIGHTS = {
+    "filler": 15,
+    "voice_tone": 15,
+    "speaking_pace": 10,
+    "body_language": 25,
+    "script_accuracy": 25,
+    "time_limit": 10,
+}
+
+FILLER_MAX_POINTS = 15
 # (good rate, bad rate) in fillers per minute
 FILLER_RATES = (2.0, 8.0)
 
 # Rule ID: (maximum points, fraction lost per sustained incident, feedback)
 VOICE_RULES = {
-    "volume": (2, 0.75, "Keep your volume steady and soften sudden loud peaks."),
-    "pitch": (2, 1.0, "Smooth out sudden rises and drops in pitch."),
-    "quiet": (2, 0.75, "Project a little more during quiet passages."),
+    "volume": (5, 0.75, "Keep your volume steady and soften sudden loud peaks."),
+    "pitch": (5, 1.0, "Smooth out sudden rises and drops in pitch."),
+    "quiet": (5, 0.75, "Project a little more during quiet passages."),
 }
 # Rule ID: (maximum points, fraction lost per sustained incident, feedback)
 BODY_RULES = {
-    "look_down": (1.5, 0.75, "Bring your eyes back to the calibrated camera position after checking notes."),
-    "face": (2.5, 1.0, "Keep your full face and both shoulders visible throughout the presentation."),
-    "tilt": (1, 0.75, "Keep your shoulders level with your calibrated posture."),
-    "repeat": (1.5, 0.75, "Vary your gestures and avoid repeating the same motion in quick succession."),
-    "still": (2, 0.75, "Use an occasional purposeful gesture to emphasize a point."),
-    "fast": (1.5, 0.75, "Slow down quick hand movements so each gesture has a clear purpose."),
+    "look_down": (4, 0.75, "Bring your eyes back to the calibrated camera position after checking notes."),
+    "face": (6, 1.0, "Keep your full face and both shoulders visible throughout the presentation."),
+    "tilt": (2.5, 0.75, "Keep your shoulders level with your calibrated posture."),
+    "repeat": (3.5, 0.75, "Vary your gestures and avoid repeating the same motion in quick succession."),
+    "still": (5, 0.75, "Use an occasional purposeful gesture to emphasize a point."),
+    "fast": (4, 0.75, "Slow down quick hand movements so each gesture has a clear purpose."),
 }
 HAND_CHECKS = ("still", "repeat", "fast")
-PACE_MAX_POINTS = 4
+PACE_MAX_POINTS = 10
+PACE_CHECK_POINTS = 5          # moderate pace and steady pace, each
 # Presentation guidance varies with context.  A 140 WPM centre and a 40 WPM
 # comfortable band are sensible defaults; the centre is configurable in the UI.
 PACE_COMFORT_BAND_WPM = 40
@@ -55,17 +69,22 @@ PACE_INCONSISTENT_CV = 0.45
 
 # Script accuracy: script_match is 0-1 (1 = delivered exactly the script).
 # Full credit at SCRIPT_GOOD_MATCH or above, no credit at SCRIPT_BAD_MATCH or below.
-SCRIPT_MAX_POINTS = 6
+SCRIPT_MAX_POINTS = 15         # coverage
 SCRIPT_GOOD_MATCH = 0.85
 SCRIPT_BAD_MATCH = 0.5
 
 # Script order: each "Skipped ahead" / "Went back" event costs a little, capped
-SCRIPT_ORDER_MAX_POINTS = 2
-SCRIPT_ORDER_LOSS_PER_EVENT = 0.5
+SCRIPT_ORDER_MAX_POINTS = 5
+SCRIPT_ORDER_LOSS_PER_EVENT = 1
+# Off script: each stretch where what's said matches none of the script's parts
+SCRIPT_OFF_MAX_POINTS = 5
+SCRIPT_OFF_LOSS_PER_EVENT = 1
+# Body language: lost per hand-visibility incident per minute (capped at the hand checks' points)
+MISSING_HANDS_LOSS = 1.875
 
 # Time limit (only when the user set one): no deduction up to TIME_GRACE over the limit, the full
 # TIME_MAX_POINTS at TIME_FULL_OVER or more over, linear in between. Finishing early is fine.
-TIME_MAX_POINTS = 3
+TIME_MAX_POINTS = 10
 TIME_GRACE = 0.05
 TIME_FULL_OVER = 0.30
 
@@ -77,7 +96,13 @@ CHECK_ALERTS = {
     "consistent_pace": ("pace",),
     "script_match": ("off_script", "out_of_order", "stuck"),
     "script_order": ("out_of_order",),
+    "off_script": ("off_script",),
 }
+
+
+def _r1(value: float) -> float:
+    """1 decimal, halves rounded up (6.25 -> 6.3; Python's round() would give 6.2)."""
+    return float(Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
 def _count(value: int) -> int:
@@ -143,12 +168,14 @@ def _pace_category(pace: Mapping[str, object] | None, target_wpm: float) -> dict
     target = min(200, max(80, float(target_wpm)))
     distance = abs(float(average) - target)
     beyond_band = max(0, distance - PACE_COMFORT_BAND_WPM)
-    moderate_deduction = 2 * min(1, beyond_band / (PACE_ZERO_CREDIT_DISTANCE_WPM - PACE_COMFORT_BAND_WPM))
+    moderate_deduction = PACE_CHECK_POINTS * min(
+        1, beyond_band / (PACE_ZERO_CREDIT_DISTANCE_WPM - PACE_COMFORT_BAND_WPM)
+    )
     low, high = target - PACE_COMFORT_BAND_WPM, target + PACE_COMFORT_BAND_WPM
     checks = {
         "moderate_pace": {
             "count": 0,
-            "max_points": 2,
+            "max_points": PACE_CHECK_POINTS,
             "deduction": round(moderate_deduction, 2),
             "feedback": (f"Aim for about {target:g} WPM ({low:g}–{high:g} WPM is the target range)."
                          if moderate_deduction else None),
@@ -163,10 +190,12 @@ def _pace_category(pace: Mapping[str, object] | None, target_wpm: float) -> dict
         mean = sum(valid_samples) / len(valid_samples)
         cv = (sum((rate - mean) ** 2 for rate in valid_samples) / len(valid_samples)) ** 0.5 / mean
         inconsistent = max(0, cv - PACE_CONSISTENT_CV)
-        consistency_deduction = 2 * min(1, inconsistent / (PACE_INCONSISTENT_CV - PACE_CONSISTENT_CV))
+        consistency_deduction = PACE_CHECK_POINTS * min(
+            1, inconsistent / (PACE_INCONSISTENT_CV - PACE_CONSISTENT_CV)
+        )
         checks["consistent_pace"] = {
             "count": len(valid_samples),
-            "max_points": 2,
+            "max_points": PACE_CHECK_POINTS,
             "deduction": round(consistency_deduction, 2),
             "feedback": "Keep a steadier pace from one part of the presentation to the next."
                         if consistency_deduction else None,
@@ -201,9 +230,12 @@ def _time_category(recorded_minutes: float | None, limit_minutes: float | None) 
     })
 
 
-def _script_category(script_match: float | None, order_events: int | None = None) -> dict:
-    """Score how closely the delivery followed the script (script_match is 0-1, 6 pts) and how
-    often it skipped ahead or went back (order_events, 2 pts)."""
+def _script_category(
+    script_match: float | None, order_events: int | None = None, off_events: int | None = None
+) -> dict:
+    """Score how much of the script was covered (script_match is 0-1, 15 pts), how often the
+    speaker skipped ahead or went back (order_events, 5 pts) and how often what they said matched
+    none of the script's parts (off_events, 5 pts)."""
     if not isinstance(script_match, (int, float)) or isinstance(script_match, bool):
         return _category({})
     match = float(script_match)
@@ -235,6 +267,15 @@ def _script_category(script_match: float | None, order_events: int | None = None
             "feedback": (f"Follow your script in order: you skipped ahead or went back "
                          f"{count} time{'s' if count != 1 else ''}.") if count else None,
         }
+    if off_events is not None:
+        count = _count(off_events)
+        checks["off_script"] = {
+            "count": count,
+            "max_points": SCRIPT_OFF_MAX_POINTS,
+            "deduction": min(SCRIPT_OFF_MAX_POINTS, count * SCRIPT_OFF_LOSS_PER_EVENT),
+            "feedback": (f"Stay on your script: {count} stretch{'es' if count != 1 else ''} "
+                         f"matched none of its parts.") if count else None,
+        }
     return _category(checks)
 
 
@@ -249,6 +290,7 @@ def score_presentation(
     expected_minutes: float | None = None,
     script_match: float | None = None,
     script_order_events: int | None = None,
+    script_off_events: int | None = None,
     volume: Mapping[str, object] | None = None,
     disabled_alerts: Collection[str] = (),
 ) -> dict:
@@ -276,12 +318,12 @@ def score_presentation(
     FALLBACK_MINUTES is assumed. Lengths under MIN_SCORING_MINUTES are scored
     as MIN_SCORING_MINUTES. The result's scoring_minutes shows the length used.
 
-    The complete rubric allocates 6 points for fillers, 6 for voice tone,
-    4 for speaking pace, 10 for body language, 8 for script accuracy (6 coverage, 2 order)
-    and 3 for the time limit. The score
-    is the share of the available points kept, scaled to 100. measured_points shows
-    how much of the rubric was evaluated. Checks tied to disabled alerts are excluded.
-    A second sustained framing failure can deduct another 2.5 measured body-language points.
+    Fixed weights out of 100 (CATEGORY_WEIGHTS): fillers 15, voice tone 15, speaking pace 10,
+    body language 25, script accuracy 25 (coverage 15, order 5, off script 5) and time limit 10.
+    Criteria and checks that weren't measured (no script, no time limit, camera off, alert
+    turned off) are left out; the score is the percentage of the measured points kept.
+    measured_points shows how much of the 100 was evaluated. A second sustained framing failure
+    can deduct up to the face check's 6 points again. Every number is rounded to 1 decimal.
     With no measured data, score is None.
     """
     minutes = _minutes(duration_seconds)
@@ -322,7 +364,7 @@ def score_presentation(
         "voice_tone": _sustained_category(voice_incidents, VOICE_RULES),
         "speaking_pace": _pace_category(pace, pace_target_wpm),
         "body_language": _sustained_category(body_incidents, BODY_RULES),
-        "script_accuracy": _script_category(script_match, script_order_events),
+        "script_accuracy": _script_category(script_match, script_order_events, script_off_events),
         "time_limit": _time_category(
             minutes if duration_source == "recorded" else None, expected_minutes
         ),
@@ -345,7 +387,7 @@ def score_presentation(
         )
         hand_scoring_minutes = max(MIN_SCORING_MINUTES, minutes or MIN_SCORING_MINUTES)
         missing_hands_deduction = min(
-            round(0.75 * missing_hands / hand_scoring_minutes, 3), available_hand_points
+            round(MISSING_HANDS_LOSS * missing_hands / hand_scoring_minutes, 3), available_hand_points
         )
         body["points"] -= missing_hands_deduction
         body["deduction"] += missing_hands_deduction
@@ -356,11 +398,23 @@ def score_presentation(
         body["points"] -= second_framing_deduction
         body["deduction"] += second_framing_deduction
 
-    measured_points = sum(category["max_points"] for category in categories.values())
-    deducted = sum(category["deduction"] for category in categories.values())
+    # 1 decimal everywhere; category totals and the score are computed from the rounded numbers so
+    # what's shown adds up
+    for name, category in categories.items():
+        for check in category["checks"].values():
+            check["deduction"] = _r1(check["deduction"])
+        category["deduction"] = _r1(min(category["deduction"], category["max_points"]))
+        category["max_points"] = _r1(category["max_points"])
+        category["points"] = (_r1(category["max_points"] - category["deduction"])
+                              if category["max_points"] else None)
+        category["weight"] = CATEGORY_WEIGHTS[name]
+    missing_hands_deduction = _r1(missing_hands_deduction)
+    second_framing_deduction = _r1(second_framing_deduction)
+    measured_points = _r1(sum(category["max_points"] for category in categories.values()))
+    deducted = _r1(sum(category["deduction"] for category in categories.values()))
     feedback = [
         {"category": category_name, "rule": rule_id, "message": check["feedback"],
-         "deduction": check["deduction"] + (second_framing_deduction if category_name == "body_language" and rule_id == "face" else 0)}
+         "deduction": _r1(check["deduction"] + (second_framing_deduction if category_name == "body_language" and rule_id == "face" else 0))}
         for category_name, category in categories.items()
         for rule_id, check in category["checks"].items()
         if check["feedback"] and check["deduction"] > 0
@@ -373,7 +427,7 @@ def score_presentation(
         })
     feedback.sort(key=lambda tip: tip["deduction"], reverse=True)
     return {
-        "score": round(SCORE_OUT_OF * (measured_points - deducted) / measured_points, 1)
+        "score": _r1(SCORE_OUT_OF * (measured_points - deducted) / measured_points)
         if measured_points else None,
         "max_score": SCORE_OUT_OF,
         "measured_points": measured_points,

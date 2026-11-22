@@ -79,12 +79,21 @@ The app sends both controls for camera-only practice too. Raw audio is optional.
 
 ### `session_score`: after the final transcript
 
-Contains `score` (out of `max_score`, currently 100, or null without measured data),
-`measured_points` (the available portion of the rubric), `categories` (filler, voice tone, speaking
-pace, body language, and script accuracy breakdowns), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
+Contains `score` (a percentage, or null without measured data), `measured_points` (how much of
+the 100 was measured), `categories` (filler, voice tone, speaking pace, body language, script
+accuracy and time limit breakdowns, each with its fixed `weight`), `feedback` (tips ordered by deduction), and `checkpoints` (mistakes
 with a `category`, `label`, and `at` in seconds from recording start). Voice incidents come from the existing voice detector.
 Webcam incidents use the configured hold durations and count each sustained condition once.
-Body language is worth up to 10 rubric points, split evenly between hand checks and the rest.
+
+**Fixed weights (out of 100):** filler words 15, voice tone 15 (volume 5, pitch 5, quiet 5),
+speaking pace 10 (pace near the target 5, steady pace 5), body language 25 (looking down 4, face
+framing 6, shoulder tilt 2.5, repeated gestures 3.5, no hand movement 5, fast hands 4), script
+accuracy 25 (coverage 15, order 5: 1 per skip ahead / step back, off script 5: 1 per stretch
+matching no part) and time limit 10 (none lost up to 5% over the limit, all at 30% over).
+Criteria that weren't measured (no script, no time limit, camera off, alert turned off) are left
+out; `score` is the percentage of the measured points kept. Every number is rounded to 1 decimal
+(halves up). The point values below predate the fixed weights; each check keeps its share.
+
 When **Hands not visible** is enabled, separate losses of hand visibility lasting one second
 by default cost 0.75 points per incident per minute, up to the remaining points for enabled hand
 checks. Sessions under one minute use one minute for this calculation.

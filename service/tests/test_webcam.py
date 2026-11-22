@@ -64,7 +64,7 @@ def test_one_sustained_face_absence_deducts_body_language_points():
 
     report = score_presentation(body_incidents=a.incidents, duration_seconds=300)
     face = report["categories"]["body_language"]["checks"]["face"]
-    assert face["deduction"] == face["max_points"] == 2.5
+    assert face["deduction"] == face["max_points"] == 6
 
 
 def test_framing_counts_partial_or_distant_face_and_missing_shoulders():
@@ -83,27 +83,29 @@ def test_framing_counts_partial_or_distant_face_and_missing_shoulders():
         assert "Stay in frame" in state["alerts"], bad_framing
         assert a.incidents["face"] == 1, bad_framing
         report = score_presentation(body_incidents=a.incidents)
-        assert report["categories"]["body_language"]["deduction"] == 2.5
+        assert report["categories"]["body_language"]["deduction"] == 6
 
 
-def test_first_two_framing_failures_each_deduct_two_and_a_half_points():
+def test_first_two_framing_failures_each_deduct_the_face_points():
     counts = {"face": 1, "tilt": 0, "look_down": 0, "still": 1, "repeat": 0, "fast": 0}
     hands = {"still", "repeat", "fast"}
     report = score_presentation(body_incidents=counts, voice_incidents={"pitch": 0}, disabled_alerts=hands)
     body = report["categories"]["body_language"]
-    assert body["points"] == body["deduction"] == 2.5 and body["max_points"] == 5
-    assert report["categories"]["voice_tone"]["points"] == 2
-    assert [tip["deduction"] for tip in report["feedback"]] == [2.5]
+    # face 6 + tilt 2.5 + looking down 4 measured; one framing failure loses the face check's 6
+    assert body["deduction"] == 6 and body["points"] == 6.5 and body["max_points"] == 12.5
+    assert report["categories"]["voice_tone"]["points"] == 5
+    assert [tip["deduction"] for tip in report["feedback"]] == [6]
 
     counts["face"] = 2
     report = score_presentation(body_incidents=counts, disabled_alerts=hands)
     body = report["categories"]["body_language"]
-    assert body["points"] == 0 and body["max_points"] == body["deduction"] == 5
-    assert [tip["deduction"] for tip in report["feedback"]] == [5]
+    # a second failure costs the face check's 6 again
+    assert body["deduction"] == 12 and body["points"] == 0.5 and body["max_points"] == 12.5
+    assert [tip["deduction"] for tip in report["feedback"]] == [12]
 
     report = score_presentation(body_incidents=counts, disabled_alerts=hands | {"face"})
     body = report["categories"]["body_language"]
-    assert body["points"] == body["max_points"] == 2.5
+    assert body["points"] == body["max_points"] == 6.5
 
 
 def test_missing_hands_cost_enabled_hand_points_even_when_pose_reports_wrists():
@@ -116,23 +118,23 @@ def test_missing_hands_cost_enabled_hand_points_even_when_pose_reports_wrists():
     assert a.incidents == {"face": 0, "tilt": 0, "look_down": 0, "hands_missing": 1}
     report = score_presentation(body_incidents=a.incidents)
     body = report["categories"]["body_language"]
-    assert body["points"] == 9.25 and body["max_points"] == 10
+    assert body["points"] == 23.1 and body["max_points"] == 25      # 1.875 lost, shown as 1.9
     assert report["feedback"][0]["rule"] == "hands_missing"
 
     report = score_presentation(body_incidents=a.incidents, disabled_alerts={"fast"})
     body = report["categories"]["body_language"]
-    assert body["points"] == 7.75 and body["max_points"] == 8.5
+    assert body["points"] == 19.1 and body["max_points"] == 21
 
     report = score_presentation(body_incidents=a.incidents, disabled_alerts={"hands_missing"})
     body = report["categories"]["body_language"]
-    assert body["points"] == body["max_points"] == 5
+    assert body["points"] == body["max_points"] == 12.5
 
     run(a, 2, start=6.1, hands=0)
     assert a.incidents["hands_missing"] == 1
     a.process(frame(8.2))
     run(a, 1.1, start=8.5, hands=0)
     body = score_presentation(body_incidents=a.incidents)["categories"]["body_language"]
-    assert a.incidents["hands_missing"] == 2 and body["points"] == 8.5
+    assert a.incidents["hands_missing"] == 2 and body["points"] == 21.2
 
 
 def test_hand_visibility_penalty_scales_with_session_length():
@@ -140,17 +142,17 @@ def test_hand_visibility_penalty_scales_with_session_length():
     short = score_presentation(body_incidents=counts, duration_seconds=18)
     long = score_presentation(body_incidents=counts, duration_seconds=17 * 60)
     repeated = score_presentation(body_incidents={**counts, "hands_missing": 17}, duration_seconds=17 * 60)
-    assert short["categories"]["body_language"]["deduction"] == 0.75
-    assert long["categories"]["body_language"]["deduction"] == 0.044
-    assert repeated["categories"]["body_language"]["deduction"] == 0.75
+    assert short["categories"]["body_language"]["deduction"] == 1.9       # 1.875 per incident/min
+    assert long["categories"]["body_language"]["deduction"] == 0.1        # 1.875 / 17
+    assert repeated["categories"]["body_language"]["deduction"] == 1.9
 
 
 def test_repeated_body_language_failures_lose_all_credit_for_the_check():
     report = score_presentation(body_incidents={"look_down": 1, "tilt": 2, "fast": 0},
                                 duration_seconds=600)
     checks = report["categories"]["body_language"]["checks"]
-    assert checks["look_down"]["deduction"] == 1.125
-    assert checks["tilt"]["deduction"] == 1
+    assert checks["look_down"]["deduction"] == 3                         # 0.75 of 4
+    assert checks["tilt"]["deduction"] == 2.5                            # all of it
     assert checks["fast"]["deduction"] == 0
 
 

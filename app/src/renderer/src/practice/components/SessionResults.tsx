@@ -25,11 +25,7 @@ export default function SessionResults({
     <section className="ph-results" aria-labelledby="ph-results-heading" aria-live="polite">
       <div className="ph-card-head">
         <h2 id="ph-results-heading">Practice results</h2>
-        {result.score !== null && (
-          <strong>
-            {result.score} / {result.max_score}
-          </strong>
-        )}
+        {result.score !== null && <strong>{result.score.toFixed(1)}%</strong>}
       </div>
       {result.score === null ? (
         <p>No score is available. Scoring requires an enabled check with enough practice data.</p>
@@ -45,7 +41,12 @@ export default function SessionResults({
                   <dd>
                     {breakdown.points === null
                       ? 'Not measured'
-                      : `${breakdown.points} / ${breakdown.max_points}`}
+                      : `${breakdown.points.toFixed(1)} / ${breakdown.max_points}`}
+                    {breakdown.points !== null &&
+                      breakdown.weight !== undefined &&
+                      breakdown.max_points < breakdown.weight && (
+                        <small> · {breakdown.weight} with every check on</small>
+                      )}
                     {pace?.average_wpm !== undefined && (
                       <small>
                         {' '}
@@ -81,7 +82,11 @@ export default function SessionResults({
               })}
             </dl>
           )}
-          <p>Score based on {result.measured_points} measured rubric points.</p>
+          <p>
+            {result.measured_points < 100
+              ? `Scored out of the ${result.measured_points} of 100 points that were measured; criteria that weren’t measured are left out.`
+              : 'Scored out of all 100 points.'}
+          </p>
           {result.feedback.length > 0 ? (
             <ul>
               {result.feedback.map(({ category, rule, message }) => (

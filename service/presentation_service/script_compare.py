@@ -14,9 +14,10 @@ they gone off topic? No GUI here (see script_compare_gui.py), so it can be teste
      `confirm` updates in a row, so one noisy window can't make it jump. It only ever moves
      FORWARD: going back to an earlier chunk gives a warning but keeps the position, so an
      accidental step back (or a repeated idea) doesn't lose your place.
-  4. Events: jumped ahead (with the skipped chunks), went back, off topic (low match to every chunk
-     AND to the script as a whole for `off_topic_s` seconds), stuck (still talking on the same chunk
-     well past the time it takes to say it), or ad-libbing (on topic, but not any one chunk).
+  4. Events: jumped ahead (every jump past the next chunk, with the skipped chunks), went back, off
+     script (what's said matches no chunk for `off_topic_s` seconds, whether or not it's on the
+     script's topic), stuck (still talking on the same chunk well past the time it takes to say it).
+     The status still tells "off topic" from "ad-libbing" (on topic, but not any one chunk).
 
 Timing uses `now` (seconds, monotonic) passed to update(), so callers and tests control the clock.
 The same file is used by the analysis service: service/presentation_service/script_compare.py.
@@ -35,10 +36,13 @@ WINDOW_WORDS = 30           # how much recent speech is compared with the script
 SHORT_WINDOW_WORDS = 12     # ...plus just the last few words, so the current sentence registers early
 MIN_CHUNK_WORDS = 6         # shorter sentences are merged into the next one
 KEYWORD_WEIGHT = 0.3        # score = 0.7 * embedding similarity + 0.3 * keyword overlap
-NEXT_BONUS = 0.05           # bonus for the current chunk and the next two
+NEXT_BONUS = 0.05           # bonus for the current chunk and the next one
 JUMP_PENALTY = 0.02         # per chunk jumped forward (backwards counts double), capped below
 MAX_PENALTY = 0.15
 CONFIRM = 2                 # updates in a row a new chunk must win before the position moves
+JUMP_MIN_SCORE = 0.55       # moving more than one chunk ahead needs a confident match (reading a
+                            # line scores ~0.7-0.9; improvising drifts around 0.3-0.5)
+BACK_ON_SCRIPT = 2          # matching updates in a row before an off-script stretch ends
 OFF_TOPIC_S = 6.0           # seconds below the threshold before "off topic" fires
 STUCK_FACTOR = 3.0          # "stuck" after this many times a chunk's expected speaking time...
 STUCK_MIN_S = 20.0          # ...but never sooner than this
@@ -139,6 +143,9 @@ class ScriptTracker:
         self.entered_at = None          # when the current position was reached
         self.stuck_alerted = False
         self.back_warned = False        # warned about going back; reset once forward again
+        self.matched_ahead = set()      # chunks ahead that were the clear best match since the last
+                                        # move: said, even if the position then jumps past them
+        self.on_count = 0               # matching updates in a row (ends an off-script stretch)
 
     def stuck_after(self, i):
         """Seconds of talking on chunk i before it counts as stuck."""
@@ -147,9 +154,9 @@ class ScriptTracker:
     def bias(self, i):
         """Bonus for the expected next chunks, penalty for jumps (backwards jumps cost double)."""
         if self.position < 0:
-            return NEXT_BONUS if i <= 1 else -min(JUMP_PENALTY * i, MAX_PENALTY)
+            return NEXT_BONUS if i == 0 else -min(JUMP_PENALTY * i, MAX_PENALTY)
         d = i - self.position
-        if 0 <= d <= 2:
+        if 0 <= d <= 1:
             return NEXT_BONUS
         return -min(JUMP_PENALTY * (abs(d) if d > 0 else 2 * abs(d)), MAX_PENALTY)
 
@@ -188,21 +195,23 @@ class ScriptTracker:
 
         events = []
         if score[best] < self.threshold:
+            # matches no chunk: off script, whether it's off topic or on-topic ad-libbing
             self.candidate, self.candidate_count = None, 0
-            if topic < self.threshold:
-                status = "off topic"
-                self.off_since = now if self.off_since is None else self.off_since
-                if not self.off_alerted and now - self.off_since >= self.off_topic_s:
-                    self.off_alerted = True
-                    events.append(event("off_topic", "Off topic: what you're saying doesn't match the script",
-                                        "Back to your script"))
-            else:
-                status = "ad-libbing (on topic, not a script line)"
-                self.off_since, self.off_alerted = None, False
+            self.on_count = 0
+            status = "off topic" if topic < self.threshold else "ad-libbing (on topic, not a script line)"
+            self.off_since = now if self.off_since is None else self.off_since
+            if not self.off_alerted and now - self.off_since >= self.off_topic_s:
+                self.off_alerted = True
+                events.append(event("off_topic", "Off script: what you're saying doesn't match any part",
+                                    "Back to your script"))
             return Match(window, sim, kw, score, best, chosen, topic, self.position, status, events)
 
-        self.off_since, self.off_alerted = None, False
-        status = "on track" if chosen in (self.position, self.position + 1, self.position + 2) else "checking"
+        self.on_count += 1
+        if self.on_count >= BACK_ON_SCRIPT:     # one stray match doesn't end an off-script stretch
+            self.off_since, self.off_alerted = None, False
+        if best > self.position and score[best] >= JUMP_MIN_SCORE:
+            self.matched_ahead.add(best)
+        status = "on track" if chosen in (self.position, self.position + 1) else "checking"
         if chosen == self.position:
             self.candidate, self.candidate_count = None, 0
             self.back_warned = False
@@ -211,7 +220,8 @@ class ScriptTracker:
             self.candidate = chosen
             # the next chunk only needs one update; anything else must win CONFIRM in a row
             needed = 1 if chosen == self.position + 1 else CONFIRM
-            if self.candidate_count >= needed:
+            jump = chosen > self.position + 1
+            if self.candidate_count >= needed and (not jump or score[chosen] >= JUMP_MIN_SCORE):
                 if chosen > self.position:
                     events, status = self.move_to(chosen, now)
                 else:
@@ -238,13 +248,15 @@ class ScriptTracker:
         """Move forward to chunk i (never called for earlier chunks)."""
         old = self.position
         events, status = [], "on track"
-        if old < 0 and i > 1:
+        # chunks that clearly matched on the way count as said, not skipped
+        self.visited.update(j for j in self.matched_ahead if j < i)
+        if old < 0 and i > 0:
             skipped = [j for j in range(i) if j not in self.visited]
             self.skipped.update(skipped)
             events.append(event("jump", f"Started at chunk {i + 1}: skipped chunks {fmt(skipped)}",
                                 "Skipped ahead"))
             status = "jumped ahead"
-        elif i > old + 2:
+        elif i > old + 1:
             skipped = [j for j in range(old + 1, i) if j not in self.visited]
             self.skipped.update(skipped)
             events.append(event("jump", f"Jumped ahead to chunk {i + 1}: skipped {fmt(skipped)}",
@@ -255,6 +267,7 @@ class ScriptTracker:
         self.entered_at, self.stuck_alerted = now, False
         self.visited.add(i)
         self.skipped.discard(i)
+        self.matched_ahead.clear()
         self.candidate, self.candidate_count = None, 0
         return events, status
 

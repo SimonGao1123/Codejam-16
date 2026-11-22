@@ -119,7 +119,7 @@ def test_after_going_back_reading_on_continues_from_the_kept_position(tracker):
 def test_off_topic_is_reported_after_a_while(tracker):
     chunks = chunk_script(SCRIPT)
     _, events = speak(tracker, chunks[:2] + [OFF_TOPIC, OFF_TOPIC])     # ~100 words, about 40 s
-    assert any(e.startswith("Off topic") for e in events), events
+    assert any(e.startswith("Off script") for e in events), events
 
 
 def test_threshold_slider_changes_what_counts_as_off_script(embed):
@@ -174,3 +174,42 @@ def test_catch_up_counts_earlier_parts_as_visited(embed):
     t.catch_up(" ".join(chunks[:3]), now=10)          # started tracking after 3 parts were said
     m = t.update(" ".join(chunks[:3]), now=11.5)
     assert m.position >= 1 and not t.skipped          # parts 1-2 were visited, not skipped
+
+
+def test_skipping_a_single_part_counts(tracker):
+    # read part 1, skip part 2, read parts 3-6: only part 2 is skipped, and "Skipped ahead" fires
+    chunks = chunk_script(SCRIPT)
+    _, events = speak(tracker, [chunks[0]] + chunks[2:6])
+    assert tracker.skipped == {1}, (tracker.skipped, events)
+    assert any(e.startswith("Jumped ahead") for e in events), events
+
+
+def test_starting_at_part_2_skips_part_1(tracker):
+    chunks = chunk_script(SCRIPT)
+    _, events = speak(tracker, chunks[1:4])
+    assert 0 in tracker.skipped, events
+
+
+def test_on_topic_speech_matching_no_part_is_off_script():
+    # a stand-in embedding: each line its own direction, everything else the script's overall
+    # topic, so new speech is on topic (similarity 1) but matches no line (~0.32 < 0.35)
+    import numpy as np
+    chunks = chunk_script(SCRIPT)
+    whole = " ".join(chunks)
+    n = len(chunks)
+
+    def embed(texts):
+        out = []
+        for text in texts:
+            v = np.zeros(n)
+            if text in chunks:
+                v[chunks.index(text)] = 1
+            else:                                   # the whole script, or anything said
+                v[:] = 1 / np.sqrt(n)
+            out.append(v)
+        return np.array(out)
+
+    t = ScriptTracker(chunks, embed)
+    assert whole and t.topic_vec is not None
+    _, events = speak(t, ["zebra quilt marmalade " * 12])     # no keyword overlap with the script
+    assert any(e.startswith("Off script") for e in events), events

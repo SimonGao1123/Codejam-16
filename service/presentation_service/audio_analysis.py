@@ -124,7 +124,9 @@ class AudioAnalyzer:
         for e in m.events:
             self.post_rule(SCRIPT_RULES[e["kind"]], e["cue"])
             if e["kind"] in ("jump", "back"):
-                self.script_order_events += 1           # scored: a little off per event
+                self.script_order_events += 1           # scored: a point off per event
+            elif e["kind"] == "off_topic":
+                self.script_off_events += 1             # scored: a point off per stretch
         out.append({
             "type": "script_position",
             "position": m.position,
@@ -194,6 +196,7 @@ class AudioAnalyzer:
         self.speech_volumes = []                    # dBFS of every voiced 50 ms block, for the volume score
         self.voice_checkpoints = []
         self.script_order_events = 0                # skipped ahead / went back, this session
+        self.script_off_events = 0                  # stretches matching no part of the script
         self._sample_offsets = []
         self._chunk_times = []
         self._received_samples = 0

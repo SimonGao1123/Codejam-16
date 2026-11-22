@@ -74,14 +74,15 @@ def test_sustained_voice_violations_alert_and_lose_credit(hz, amp, rule, banner)
     assert any(banner in msg.get("alerts", []) for msg in messages)
     assert analyzer.voice_incidents[rule] == 1
     report = score_presentation(voice_incidents=analyzer.voice_incidents, duration_seconds=600)
-    assert report["categories"]["voice_tone"]["checks"][rule]["deduction"] == (2 if rule == "pitch" else 1.5)
+    # pitch: 1.0 of its 5 points per incident; volume / quiet: 0.75 of 5 = 3.75, shown as 3.8
+    assert report["categories"]["voice_tone"]["checks"][rule]["deduction"] == (5 if rule == "pitch" else 3.8)
 
     # Another failure during the banner cooldown still counts in the results.
     feed_all(analyzer, tone(200, 0.2, 0.2))
     feed_all(analyzer, tone(hz, amp, 0.8))
     assert analyzer.voice_incidents[rule] == 2
     report = score_presentation(voice_incidents=analyzer.voice_incidents, duration_seconds=600)
-    assert report["categories"]["voice_tone"]["checks"][rule]["deduction"] == 2
+    assert report["categories"]["voice_tone"]["checks"][rule]["deduction"] == 5   # all 5 points
 
 
 def test_pitch_estimator_prefers_fundamental_over_a_louder_third_harmonic():
@@ -203,16 +204,16 @@ def test_recording_baseline_uses_the_uploaded_audio_not_live_calibration():
 def test_fillers_are_scored_per_minute():
     voice = dict.fromkeys(VOICE_RULES, 0)
     body = dict.fromkeys(BODY_RULES, 0)
-    # 8 fillers in one minute is at the "bad" rate (8/min): the full 6 filler points are lost.
-    # The 22 measured rubric points are scaled to a score out of 100.
+    # 8 fillers in one minute is at the "bad" rate (8/min): all 15 filler points are lost.
+    # Fillers 15 + voice 15 + body 25 = 55 points measured; the score is the percentage kept.
     result = score_presentation(filler_counts={"um": 8, "filler?": 5},
                                 voice_incidents=voice, body_incidents=body, duration_seconds=60)
     assert result["max_score"] == 100
-    assert result["measured_points"] == 22
-    assert result["categories"]["filler"]["deduction"] == 6
+    assert result["measured_points"] == 55
+    assert result["categories"]["filler"]["deduction"] == 15
     assert result["score"] == 72.7
-    assert result["categories"]["voice_tone"]["max_points"] == 6
-    assert result["categories"]["body_language"]["max_points"] == 10
+    assert result["categories"]["voice_tone"]["max_points"] == 15
+    assert result["categories"]["body_language"]["max_points"] == 25
     # the same 8 fillers over 10 minutes is under the "good" rate: nothing lost
     relaxed = score_presentation(filler_counts={"um": 8}, voice_incidents=voice, body_incidents=body,
                                  duration_seconds=600)
@@ -221,13 +222,13 @@ def test_fillers_are_scored_per_minute():
 
 def test_pace_scores_moderate_delivery_and_consistency():
     steady = score_presentation(pace={"average_wpm": 140, "segment_wpms": [135, 145, 140]})
-    assert steady["categories"]["speaking_pace"]["points"] == 4
+    assert steady["categories"]["speaking_pace"]["points"] == 10
     assert steady["max_score"] == 100
     assert steady["score"] == 100
 
     rushed = score_presentation(pace={"average_wpm": 210, "segment_wpms": [100, 190, 240]})
     checks = rushed["categories"]["speaking_pace"]["checks"]
-    assert checks["moderate_pace"]["deduction"] == 2
+    assert checks["moderate_pace"]["deduction"] == 5
     assert checks["consistent_pace"]["deduction"] > 0
 
 
@@ -251,7 +252,7 @@ def test_disabled_alerts_exclude_only_their_scoring_checks():
     assert set(checks["body_language"]["checks"]) == {"tilt"}
     assert set(checks["speaking_pace"]["checks"]) == {"moderate_pace"}
     assert checks["script_accuracy"]["points"] is None
-    assert report["measured_points"] == 5
+    assert report["measured_points"] == 12.5                 # quiet 5 + tilt 2.5 + moderate pace 5
     assert report["score"] == 60
     assert [tip["rule"] for tip in report["feedback"]] == ["moderate_pace"]
 
@@ -491,7 +492,7 @@ def test_quiet_voiced_speech_below_room_cutoff_counts_but_noise_does_not():
     assert reading["volume_dbfs"] < reading["silence_dbfs"] == -65 and reading["speaking"]
     assert "Speak up" in board.active()
     report = score_presentation(voice_incidents=analyzer.voice_incidents)
-    assert report["categories"]["voice_tone"]["checks"]["quiet"]["deduction"] == 1.5
+    assert report["categories"]["voice_tone"]["checks"]["quiet"]["deduction"] == 3.8   # 0.75 of 5
 
 
 def test_quiet_unpitched_bursts_count_across_short_pauses():
@@ -510,7 +511,7 @@ def test_quiet_unpitched_bursts_count_across_short_pauses():
     assert analyzer.voice_incidents["quiet"] == 1
     assert "Speak up" in board.active()
     report = score_presentation(voice_incidents=analyzer.voice_incidents)
-    assert report["categories"]["voice_tone"]["checks"]["quiet"]["deduction"] == 1.5
+    assert report["categories"]["voice_tone"]["checks"]["quiet"]["deduction"] == 3.8   # 0.75 of 5
 
 
 def test_silence_level_survives_a_new_session_and_is_clamped(stt_model):
@@ -581,10 +582,10 @@ def test_volume_and_quiet_incidents_are_scored_under_voice_tone():
         duration_seconds=60,
     )
     voice = report["categories"]["voice_tone"]
-    assert voice["max_points"] == 6
+    assert voice["max_points"] == 15
     assert set(voice["checks"]) == {"volume", "quiet", "pitch"}
-    assert voice["checks"]["volume"]["deduction"] == 2
-    assert voice["checks"]["quiet"]["deduction"] == 2
+    assert voice["checks"]["volume"]["deduction"] == 5
+    assert voice["checks"]["quiet"]["deduction"] == 5
     assert voice["checks"]["pitch"]["deduction"] == 0
 
 
@@ -693,21 +694,71 @@ def test_going_over_the_time_limit_costs_points():
     assert time_check(9 * 60, 10)["checks"]["over_time"]["deduction"] == 0        # early: fine
     assert time_check(10.4 * 60, 10)["checks"]["over_time"]["deduction"] == 0     # 4% over: grace
     mid = time_check(11.75 * 60, 10)["checks"]["over_time"]                        # 17.5% over
-    assert mid["deduction"] == pytest.approx(1.5) and "18% over your 10:00 limit (11:45)" in mid["feedback"]
-    assert time_check(14 * 60, 10)["checks"]["over_time"]["deduction"] == 3        # 40% over: all 3
+    assert mid["deduction"] == 5 and "18% over your 10:00 limit (11:45)" in mid["feedback"]
+    assert time_check(14 * 60, 10)["checks"]["over_time"]["deduction"] == 10       # 40% over: all 10
     assert time_check(14 * 60, None)["max_points"] == 0                            # no limit: not scored
     # without a recorded length the limit is only the fallback length, never "over time"
     assert score_presentation(expected_minutes=10)["categories"]["time_limit"]["max_points"] == 0
 
 
-def test_skipping_around_the_script_costs_a_little_per_event():
+def test_skipping_around_the_script_costs_a_point_per_event():
     def order(events, disabled=()):
         report = score_presentation(script_match=1.0, script_order_events=events, disabled_alerts=disabled)
         return report["categories"]["script_accuracy"]["checks"].get("script_order")
 
     assert order(0)["deduction"] == 0
-    assert order(1)["deduction"] == 0.5 and "1 time." in order(1)["feedback"]
-    assert order(9)["deduction"] == 2                                              # capped
+    assert order(1)["deduction"] == 1 and "1 time." in order(1)["feedback"]
+    assert order(9)["deduction"] == 5                                              # capped
     assert order(3, disabled=("out_of_order",)) is None                           # alert off: not scored
     # no script: no script category at all, whatever the count
     assert score_presentation(script_order_events=3)["categories"]["script_accuracy"]["max_points"] == 0
+
+
+def test_fixed_weights_add_up_to_100_and_scores_are_percentages():
+    from presentation_service.scoring import (CATEGORY_WEIGHTS, FILLER_MAX_POINTS, PACE_CHECK_POINTS,
+                                              SCRIPT_MAX_POINTS, SCRIPT_OFF_MAX_POINTS,
+                                              SCRIPT_ORDER_MAX_POINTS, TIME_MAX_POINTS)
+    assert sum(CATEGORY_WEIGHTS.values()) == 100
+    assert FILLER_MAX_POINTS == CATEGORY_WEIGHTS["filler"]
+    assert sum(r[0] for r in VOICE_RULES.values()) == CATEGORY_WEIGHTS["voice_tone"]
+    assert 2 * PACE_CHECK_POINTS == CATEGORY_WEIGHTS["speaking_pace"]
+    assert sum(r[0] for r in BODY_RULES.values()) == CATEGORY_WEIGHTS["body_language"]
+    assert (SCRIPT_MAX_POINTS + SCRIPT_ORDER_MAX_POINTS + SCRIPT_OFF_MAX_POINTS
+            == CATEGORY_WEIGHTS["script_accuracy"])
+    assert TIME_MAX_POINTS == CATEGORY_WEIGHTS["time_limit"]
+
+    everything = dict(
+        filler_counts={"um": 0}, voice_incidents=dict.fromkeys(VOICE_RULES, 0),
+        body_incidents=dict.fromkeys(BODY_RULES, 0),
+        pace={"average_wpm": 140, "segment_wpms": [138, 142]},
+        script_match=1.0, script_order_events=0, script_off_events=0,
+        duration_seconds=540, expected_minutes=10,
+    )
+    perfect = score_presentation(**everything)
+    assert perfect["measured_points"] == 100 and perfect["score"] == 100
+    assert all(c["weight"] == CATEGORY_WEIGHTS[n] for n, c in perfect["categories"].items())
+
+    # no script and no time limit: scored out of the other 65 points, still a percentage
+    partial = score_presentation(**{**everything, "script_match": None, "expected_minutes": None,
+                                    "filler_counts": {"um": 3}})
+    assert partial["measured_points"] == 65
+    filler = partial["categories"]["filler"]
+    assert partial["score"] == round(100 * (65 - filler["deduction"]) / 65, 1)
+
+    # every number has at most 1 decimal
+    messy = score_presentation(**{**everything, "voice_incidents": {"volume": 1, "pitch": 0, "quiet": 1},
+                                  "body_incidents": {**dict.fromkeys(BODY_RULES, 0), "look_down": 1}})
+    numbers = [messy["score"], messy["measured_points"]] + [
+        v for c in messy["categories"].values() for v in (c["points"], c["deduction"])
+    ] + [ch["deduction"] for c in messy["categories"].values() for ch in c["checks"].values()]
+    assert all(round(n, 1) == n for n in numbers if n is not None)
+
+
+def test_off_script_stretches_cost_a_point_each():
+    def off(events):
+        report = score_presentation(script_match=1.0, script_order_events=0, script_off_events=events)
+        return report["categories"]["script_accuracy"]["checks"]["off_script"]
+
+    assert off(0)["deduction"] == 0
+    assert off(2)["deduction"] == 2 and "2 stretches" in off(2)["feedback"]
+    assert off(9)["deduction"] == 5                                                # capped

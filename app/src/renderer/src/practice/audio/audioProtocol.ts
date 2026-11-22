@@ -133,6 +133,7 @@ export interface SessionScoreMessage {
     {
       points: number | null
       max_points: number
+      weight?: number // the criterion's fixed share of the 100
       deduction: number
       checks: Record<
         string,
