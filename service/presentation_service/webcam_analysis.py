@@ -68,7 +68,7 @@ READY_ABORT_S = 0.4         # not ready for this long while recording = start ov
 
 class Alert:
     """Fires once a condition has held for `hold_s`, stays on screen `show_s` after it clears, then
-    can't fire again for `cooldown_s`. All three (and `enabled`) come from the Live alerts settings."""
+    can't fire again for `cooldown_s`. All three (and `enabled`) come from the Settings."""
 
     def __init__(self, text, hold_s, show_s=1.5, cooldown_s=0.0):
         self.text, self.hold_s, self.show_s, self.cooldown_s = text, hold_s, show_s, cooldown_s
@@ -343,8 +343,9 @@ class Calibration:
                 "calibrated": self.baseline is not None, "message": self.message}
 
 
-def line(text, color="white"):
-    return {"text": text, "color": color}
+def line(stat, text, color="white"):
+    """stat: which of the app's stats this is (docs/webcam-protocol.md), so it can be turned off."""
+    return {"stat": stat, "text": text, "color": color}
 
 
 class WebcamAnalyzer:
@@ -418,7 +419,7 @@ class WebcamAnalyzer:
                 self.checkpoints.append((since, "body_language", self.rules[rule].text))
 
     def apply_settings(self, rules):
-        """Live alerts settings: {rule id: {enabled, threshold, duration, cooldown}}."""
+        """Settings: {rule id: {enabled, threshold, duration, cooldown}}."""
         for rule_id, alert in self.rules.items():
             s = rules.get(rule_id)
             if not s:
@@ -542,10 +543,10 @@ class WebcamAnalyzer:
             if base and shoulders_visible:
                 off = tilt - base["tilt"]
                 tilt_bad = abs(off) > self.limits["tilt"]
-                lines.append(line(f"shoulder tilt: {tilt:+.1f} deg  ({off:+.1f} vs calibrated)",
+                lines.append(line("tilt", f"shoulder tilt: {tilt:+.1f} deg  ({off:+.1f} vs calibrated)",
                                   "red" if tilt_bad else "white"))
             else:
-                lines.append(line(f"shoulder tilt: {tilt:+.1f} deg"))
+                lines.append(line("tilt", f"shoulder tilt: {tilt:+.1f} deg"))
 
             # wrists in shoulder widths from the shoulder midpoint
             mx, my = (lm[L_SHOULDER].x + lm[R_SHOULDER].x) / 2 * w, (lm[L_SHOULDER].y + lm[R_SHOULDER].y) / 2 * h
@@ -570,14 +571,14 @@ class WebcamAnalyzer:
             still = both_recent and (self.motion.activity(1.0) < HAND_STILL or at_rest)
             repeating = both_recent and repeat > self.limits["repeat"]
             still_s = now - self.still_alert.bad_since if self.still_alert.bad_since else 0
-            lines.append(line(f"hands: speed {speed:.1f}  avg {busy:.1f}  repeat {repeat:.2f}"
+            lines.append(line("hands", f"hands: speed {speed:.1f}  avg {busy:.1f}  repeat {repeat:.2f}"
                               + (f" ({repeat_where})" if repeat_where and repeat > 0.3 else "")
                               + (f"  still {still_s:.0f}s" if still_s >= 1 else "")
                               + ("  at rest" if at_rest else ""),
                               "red" if fast or repeating or still_s > HAND_STILL_S else "white"))
         else:
             self.motion.clear()
-            lines.append(line("no body detected - step back so shoulders are in frame", "red"))
+            lines.append(line("body", "no body detected - step back so shoulders are in frame", "red"))
 
         # hand angle, shown next to each wrist
         for hand, pts in zip(hands, hand_points):
@@ -592,12 +593,13 @@ class WebcamAnalyzer:
             if base and "pitch" in base:
                 down, eyes_off = pitch - base["pitch"], eyes - base["eyes"]
                 down_bad = down > self.limits["look_down"] or eyes_off > EYES_DOWN_MAX
-                lines.append(line(f"eye level: head {down:+.0f} deg down, eyes down {eyes_off:+.2f}  (vs calibrated)",
+                lines.append(line("eye_level", f"eye level: head {down:+.0f} deg down, eyes down {eyes_off:+.2f}"
+                                  "  (vs calibrated)",
                                   "red" if down_bad else "white"))
             else:
-                lines.append(line(f"eye level: head pitch {pitch:+.0f} deg, eyes down {eyes:.2f}"))
+                lines.append(line("eye_level", f"eye level: head pitch {pitch:+.0f} deg, eyes down {eyes:.2f}"))
         else:
-            lines.append(line("face not fully visible", "red"))
+            lines.append(line("eye_level", "face not fully visible", "red"))
 
         lines.extend(extra_lines)
 

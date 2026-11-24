@@ -40,8 +40,8 @@ export default function Practice({
   const [libraryError, setLibraryError] = useState(false)
   const { running, finished, camera, microphone, cameraStream, micStream, pending } = session
   const [script, setScript] = useState('') // optional; empty = no script tracking
-  const [targetMinutes, setTargetMinutes] = useState<number | null>(null) // time the user has
-  const speech = useAudioAnalysis(micStream, script, targetMinutes, session.startedAt, voiceBaseline)
+  const [targetSeconds, setTargetSeconds] = useState<number | null>(null) // time the user has
+  const speech = useAudioAnalysis(micStream, script, targetSeconds, session.startedAt, voiceBaseline)
   const busy = running || session.preparing || session.saving || finishing
   useEffect(() => onBusyChange(busy), [busy, onBusyChange])
 
@@ -153,8 +153,8 @@ export default function Practice({
         setScript={setScript}
         running={running}
         speech={speech}
-        targetMinutes={targetMinutes}
-        setTargetMinutes={setTargetMinutes}
+        targetSeconds={targetSeconds}
+        setTargetSeconds={setTargetSeconds}
       />
       {session.recordingError && (
         <p className="ph-error" role="status">

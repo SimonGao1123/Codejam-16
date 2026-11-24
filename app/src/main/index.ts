@@ -61,7 +61,7 @@ function createWindow(servicePort: number): void {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.simongao.colloquia')
   // macOS: show the Colloquia icon in the Dock (in development it would be Electron's)
   if (process.platform === 'darwin') app.dock?.setIcon(icon)
 

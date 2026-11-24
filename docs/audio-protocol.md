@@ -61,7 +61,7 @@ Sent when the connection opens, when the script changes (once typing pauses), an
 
 Sent when the connection opens and whenever the Script card's "Time you have" field changes; kept
 across sessions. It sets the **desired pace**: with a script, script words × 60 / `seconds`
-(clamped to 40–250 WPM); without a script (or without a time), the Live alerts **Target pace**
+(clamped to 40–250 WPM); without a script (or without a time), the Settings **Target pace**
 slider (default 140). The live pace alert, the average pace alert and the final pace score all use
 it, and it's also passed to the scorer as the expected length. Both `script` and `target_time` get
 a `pace_target` reply.
@@ -216,7 +216,7 @@ Script pop-ups (no part numbers; mid-talk they mean nothing): `Skipped ahead` / 
 seconds off script before it fires) and `Move on to the next part` (rule `stuck`: threshold = how
 many times a part's expected speaking time, at least 20 s).
 
-The Live alerts tab's `volume`, `pitch`, `quiet`, `pause` and `filler` rules (sent in the webcam
+The Settings tab's `volume`, `pitch`, `quiet`, `pause` and `filler` rules (sent in the webcam
 side's `settings` message) control these: on/off, threshold (dB above / semitones in either
 direction / dB below normal), minimum duration (for `pause`, how long a pause may be), and
 cooldown. Fillers are always counted in the transcript.

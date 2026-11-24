@@ -5,17 +5,23 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-import { useAlertPreferences } from '../../liveAlert/useAlertPreferences'
 import type { AudioAnalysis } from '../audio/useAudioAnalysis'
-import { pdfText } from '../script/pdfText'
+import ScriptEditor from './ScriptEditor'
+import ScriptPace from './ScriptPace'
 
 type Props = {
   script: string
   setScript: (text: string) => void
   running: boolean
   speech: AudioAnalysis
-  targetMinutes: number | null // the time the user has to present; null = not set
-  setTargetMinutes: (minutes: number | null) => void
+  targetSeconds: number | null // the time the user has to present; null = not set
+  setTargetSeconds: (seconds: number | null) => void
+}
+
+function formatDuration(total: number): string {
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return [minutes && `${minutes} min`, seconds && `${seconds} sec`].filter(Boolean).join(' ')
 }
 
 export default function ScriptPanel({
@@ -23,13 +29,11 @@ export default function ScriptPanel({
   setScript,
   running,
   speech,
-  targetMinutes,
-  setTargetMinutes
+  targetSeconds,
+  setTargetSeconds
 }: Props): React.JSX.Element {
   const { scriptChunks: chunks, scriptReady, scriptPosition: pos, connected } = speech
   const [editing, setEditing] = useState(true)
-  const [pdfStatus, setPdfStatus] = useState<{ text: string; error: boolean } | null>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLOListElement>(null)
   const hasScript = chunks.length > 0
 
@@ -47,30 +51,12 @@ export default function ScriptPanel({
     item?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [pos?.position])
 
-  async function attachPdf(file: File | undefined): Promise<void> {
-    if (!file) return
-    setPdfStatus({ text: `Reading ${file.name}…`, error: false })
-    try {
-      const text = await pdfText(file)
-      setScript(text)
-      setPdfStatus({ text: `Read from ${file.name}: check the text above`, error: false })
-    } catch (err) {
-      setPdfStatus({ text: err instanceof Error ? err.message : String(err), error: true })
-    } finally {
-      if (fileRef.current) fileRef.current.value = '' // allow attaching the same file again
-    }
-  }
-
-  // desired pace: Python's script words / time when both are set, else the Live alerts Target pace
-  const [preferences] = useAlertPreferences()
-  const sliderPace = preferences.rules.pace?.threshold ?? 140
+  // desired pace: Python's script words / time when both are set, else the Settings target pace
   const target = speech.paceTarget
-  const paceText =
-    target?.source === 'script' && script.trim() && targetMinutes
-      ? `Desired pace: ${target.desired_wpm.toFixed(0)} WPM (${target.script_words.toLocaleString()} words in ${targetMinutes} min)`
-      : targetMinutes
-        ? `Add a script to set your pace from your time. Until then: ${sliderPace} WPM (Live alerts target pace)`
-        : `Desired pace: ${sliderPace} WPM (Live alerts target pace). Enter your time and a script to pace yourself to finish on time.`
+  const scriptPace =
+    target?.source === 'script' && script.trim() && targetSeconds
+      ? `Desired pace: ${target.desired_wpm.toFixed(0)} WPM (${target.script_words.toLocaleString()} words in ${formatDuration(targetSeconds)})`
+      : null
 
   const showParts = !editing && hasScript
   const status = pos
@@ -136,70 +122,19 @@ export default function ScriptPanel({
           </div>
         </>
       ) : (
-        <div className="ph-script-edit">
-          <textarea
-            value={script}
-            onChange={(e) => setScript(e.target.value)}
-            disabled={running}
-            placeholder="Paste your script here, or attach a PDF. Leave it empty to practise without script tracking."
-            aria-label="Your script"
-          />
-          <div className="ph-script-bar">
-            <button
-              className="ph-script-button"
-              onClick={() => fileRef.current?.click()}
-              disabled={running}
-            >
-              Attach PDF
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/pdf,.pdf"
-              hidden
-              onChange={(e) => void attachPdf(e.target.files?.[0])}
-            />
-            {script && (
-              <button
-                className="ph-script-button"
-                onClick={() => {
-                  setScript('')
-                  setPdfStatus(null)
-                }}
-                disabled={running}
-              >
-                Clear
-              </button>
-            )}
-            {pdfStatus && (
-              <span className={pdfStatus.error ? 'ph-error' : 'ph-webcam-note'}>
-                {pdfStatus.text}
-              </span>
-            )}
-          </div>
-        </div>
+        <ScriptEditor
+          script={script}
+          setScript={setScript}
+          disabled={running}
+          placeholder="Paste your script here, or attach a PDF. Leave it empty to practise without script tracking."
+        />
       )}
-      <div className="ph-script-pace">
-        <label>
-          Time you have
-          <input
-            type="number"
-            min={0.5}
-            step={0.5}
-            inputMode="decimal"
-            value={targetMinutes ?? ''}
-            onChange={(e) => {
-              const minutes = parseFloat(e.target.value)
-              setTargetMinutes(minutes > 0 ? minutes : null)
-            }}
-            disabled={running}
-            placeholder="–"
-            aria-label="Time you have, in minutes"
-          />
-          min
-        </label>
-        <span>{paceText}</span>
-      </div>
+      <ScriptPace
+        targetSeconds={targetSeconds}
+        setTargetSeconds={setTargetSeconds}
+        disabled={running}
+        scriptPace={scriptPace}
+      />
     </section>
   )
 }

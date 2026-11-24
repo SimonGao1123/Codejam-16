@@ -66,6 +66,11 @@ body,
   gap: 18px;
   align-items: start;
 }
+.la-column {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
 .la-card {
   min-width: 0;
   padding: 22px;
@@ -103,6 +108,62 @@ body,
 .la-rule:focus-within {
   border-color: var(--c-border-strong);
   background: var(--c-raised);
+}
+.la-toggle {
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.la-advanced {
+  margin-top: 14px;
+}
+.la-advanced summary {
+  color: var(--c-text-2);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.la-advanced summary:focus-visible {
+  outline: 2px solid var(--c-accent-text-hover);
+  outline-offset: 3px;
+}
+.la-parts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 0;
+  font-size: 14px;
+}
+.la-parts legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--c-text-2);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.la-parts p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--c-muted);
+  font-size: 13px;
+}
+.la-parts label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.la-parts input {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--c-accent);
+}
+.la-parts:disabled label {
+  opacity: 0.5;
+  cursor: default;
 }
 .la-rule-open {
   flex: 1;

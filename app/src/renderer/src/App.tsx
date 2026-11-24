@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { PracticeLibrary } from '../../main/practiceLibrary'
 import VoiceCalibration from './calibration/VoiceCalibration'
 import { loadVoiceCalibration, saveVoiceCalibration } from './calibration/calibrationCapture'
-import LiveAlerts from './liveAlert/LiveAlerts'
+import Settings from './liveAlert/Settings'
 import MainMenu from './menu/MainMenu'
 import Practice from './practice/Practice'
 import UploadGrade from './upload/UploadGrade'
@@ -13,7 +13,7 @@ import './practice/practice.css'
 const emptyLibrary: PracticeLibrary = { folders: [], attempts: [] }
 
 function App(): React.JSX.Element {
-  const [page, setPage] = useState<'menu' | 'practice' | 'upload' | 'alerts' | 'calibration'>(
+  const [page, setPage] = useState<'menu' | 'practice' | 'upload' | 'settings' | 'calibration'>(
     'menu'
   )
   const [voiceBaseline, setVoiceBaseline] = useState(loadVoiceCalibration)
@@ -78,11 +78,11 @@ function App(): React.JSX.Element {
           Voice
         </button>
         <button
-          aria-current={page === 'alerts' ? 'page' : undefined}
-          onClick={() => setPage('alerts')}
+          aria-current={page === 'settings' ? 'page' : undefined}
+          onClick={() => setPage('settings')}
         >
-          <RailIcon d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0" />
-          Alerts
+          <RailIcon d="M4 7h10M18 7h2M14 4.5v5M4 17h2M10 17h10M10 14.5v5" />
+          Settings
         </button>
       </nav>
       <div className="ph-page">
@@ -114,7 +114,7 @@ function App(): React.JSX.Element {
           )}
         </div>
         <div hidden={page !== 'upload'}>{page === 'upload' && <UploadGrade />}</div>
-        <div hidden={page !== 'alerts'}>{page === 'alerts' && <LiveAlerts />}</div>
+        <div hidden={page !== 'settings'}>{page === 'settings' && <Settings />}</div>
         {page === 'calibration' && (
           <VoiceCalibration
             baseline={voiceBaseline}

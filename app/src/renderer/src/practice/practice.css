@@ -411,6 +411,7 @@
   color: var(--c-text-2);
   font-size: 14px;
 }
+.ph-script-time,
 .ph-script-pace label {
   display: inline-flex;
   align-items: center;
@@ -419,7 +420,7 @@
   color: var(--c-text);
 }
 .ph-script-pace input {
-  width: 72px;
+  width: 64px;
   padding: 6px 8px;
   border: 1px solid var(--c-border-strong);
   border-radius: var(--radius);

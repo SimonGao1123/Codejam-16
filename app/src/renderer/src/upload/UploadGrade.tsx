@@ -11,7 +11,8 @@ import {
 } from '../practice/audio/audioProtocol'
 import { createLandmarkers, detect, type Landmarkers } from '../practice/camera/webcamLandmarkers'
 import type { VoiceSample } from '../practice/components/VoiceGraph'
-import { pdfText } from '../practice/script/pdfText'
+import ScriptEditor from '../practice/components/ScriptEditor'
+import ScriptPace from '../practice/components/ScriptPace'
 import SessionResults from '../practice/components/SessionResults'
 import PresentationPlayback from '../practice/components/PresentationPlayback'
 import TranscriptPanel, { type TranscriptAnalysis } from '../practice/components/TranscriptPanel'
@@ -41,8 +42,7 @@ export default function UploadGrade(): React.JSX.Element {
   const [mediaDuration, setMediaDuration] = useState<number>(0)
   const [isVideo, setIsVideo] = useState(false)
   const [script, setScript] = useState('')
-  const [targetMinutes, setTargetMinutes] = useState<number | null>(null)
-  const [pdfStatus, setPdfStatus] = useState<string | null>(null)
+  const [targetSeconds, setTargetSeconds] = useState<number | null>(null)
 
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -61,7 +61,6 @@ export default function UploadGrade(): React.JSX.Element {
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const pdfInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef(false)
   const pitchSamples = useRef<VoiceSample[]>([])
   const volumeSamples = useRef<VoiceSample[]>([])
@@ -214,21 +213,6 @@ export default function UploadGrade(): React.JSX.Element {
     }
   }
 
-  const handlePdfAttach = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setPdfStatus(`Reading ${f.name}…`)
-    try {
-      const text = await pdfText(f)
-      setScript(text)
-      setPdfStatus(`Loaded from ${f.name}`)
-    } catch (err) {
-      setPdfStatus(err instanceof Error ? err.message : 'Could not read PDF')
-    } finally {
-      if (pdfInputRef.current) pdfInputRef.current.value = ''
-    }
-  }
-
   const processRecording = async (): Promise<void> => {
     if (!file || !fileUrl || processing) return
     setProcessing(true)
@@ -373,7 +357,7 @@ export default function UploadGrade(): React.JSX.Element {
       audioWs.send(
         JSON.stringify({
           type: 'target_time',
-          seconds: targetMinutes && targetMinutes > 0 ? targetMinutes * 60 : null
+          seconds: targetSeconds
         })
       )
       // Uploaded recordings establish their own pitch and volume baseline. Their codec gain and
@@ -642,72 +626,29 @@ export default function UploadGrade(): React.JSX.Element {
         </section>
 
         {/* Script & Target Time Card */}
-        <section className="ph-upload-card" aria-labelledby="ph-upload-script-heading">
+        <section className="ph-script" aria-labelledby="ph-upload-script-heading">
           <div className="ph-card-head">
-            <h2 id="ph-upload-script-heading">2. Script & Expected Time (Optional)</h2>
-            <span>{script.trim() ? 'Script attached' : 'Optional · Script tracking'}</span>
+            <h2 id="ph-upload-script-heading">2. Script</h2>
+            <span>
+              {script.trim() ? 'Compared with your recording' : 'Optional · script tracking is off'}
+            </span>
           </div>
-
-          <div className="ph-script-edit">
-            <textarea
-              className="ph-script-input"
-              rows={5}
-              placeholder="Paste your presentation script here, or attach a text PDF below (optional)..."
-              value={script}
-              disabled={processing}
-              onChange={(e): void => setScript(e.target.value)}
-            />
-            <div className="ph-script-actions" style={{ marginTop: '10px' }}>
-              <input
-                ref={pdfInputRef}
-                type="file"
-                accept="application/pdf"
-                style={{ display: 'none' }}
-                onChange={handlePdfAttach}
-              />
-              <button
-                type="button"
-                className="ph-change-file-btn"
-                disabled={processing}
-                onClick={(): void => pdfInputRef.current?.click()}
-              >
-                Attach PDF script
-              </button>
-              {pdfStatus && (
-                <span style={{ fontSize: '13px', color: 'var(--c-text-2)', marginLeft: '12px' }}>
-                  {pdfStatus}
-                </span>
-              )}
-            </div>
-
-            <div style={{ marginTop: '14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <label htmlFor="target-min" style={{ fontSize: '14px', color: 'var(--c-text-2)' }}>
-                Time limit / Target duration (minutes):
-              </label>
-              <input
-                id="target-min"
-                type="number"
-                min="0.5"
-                step="0.5"
-                max="60"
-                style={{
-                  width: '90px',
-                  padding: '6px 10px',
-                  background: 'var(--c-inset)',
-                  border: '1px solid var(--c-border-strong)',
-                  borderRadius: 'var(--radius)',
-                  color: 'var(--c-text)'
-                }}
-                disabled={processing}
-                value={targetMinutes ?? ''}
-                onChange={(e): void => {
-                  const val = parseFloat(e.target.value)
-                  setTargetMinutes(val > 0 ? val : null)
-                }}
-                placeholder="e.g. 5"
-              />
-            </div>
-          </div>
+          <ScriptEditor
+            script={script}
+            setScript={setScript}
+            disabled={processing}
+            placeholder="Paste your script here, or attach a PDF. Leave it empty to grade without script tracking."
+          />
+          <ScriptPace
+            targetSeconds={targetSeconds}
+            setTargetSeconds={setTargetSeconds}
+            disabled={processing}
+            scriptPace={
+              script.trim() && targetSeconds
+                ? 'Your pace will be graded against your script and time.'
+                : null
+            }
+          />
         </section>
 
         {/* Process Button & Progress */}

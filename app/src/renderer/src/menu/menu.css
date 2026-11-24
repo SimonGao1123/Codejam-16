@@ -54,11 +54,6 @@
   padding: 0 16px 16px;
 }
 
-.ph-app .ph-menu-delete {
-  border-color: var(--c-danger-border);
-  color: var(--c-danger-text);
-}
-
 .ph-progress-chart {
   --track-height: 124px;
   display: flex;

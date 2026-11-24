@@ -5,6 +5,10 @@
   margin-bottom: 30px;
 }
 
+.ph-upload-section .ph-script {
+  margin-top: 0;
+}
+
 .ph-upload-card {
   background: var(--c-bg);
   border: 1px solid var(--c-border);

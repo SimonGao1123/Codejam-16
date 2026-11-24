@@ -45,7 +45,8 @@ export default function AlertRules({
     <section className="la-card" aria-labelledby="la-rules">
       <h2 id="la-rules">Alert and scoring settings</h2>
       <p className="la-hint">
-        Click a rule to adjust it and see what it&apos;s worth in your score.
+        Points are what each rule is worth in your score out of 100. Turning a rule off stops its
+        alert and leaves its points out of the score. Click a rule to adjust it.
       </p>
       <div className="la-rules">
         {groups.map((group) => (

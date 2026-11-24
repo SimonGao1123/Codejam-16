@@ -1,24 +1,56 @@
 // Canvas drawing over the webcam, ported from webcam_test.py. The canvas is sized to the video's
 // pixel size, so the pixel sizes below match the Python version on the same camera.
 
-import type { Style } from '../../liveAlert/ruleDefinitions'
+import { FaceLandmarker } from '@mediapipe/tasks-vision'
+
+import type { Preferences } from '../../liveAlert/ruleDefinitions'
+import type { SkeletonPart, StatPart } from '../../liveAlert/webcamParts'
 import type { FrameMessage, OverlayColor, StateMessage } from './webcamProtocol'
 
-// A simplified skeleton, readable at a glance: the face (eyes, nose, ears), the upper body
-// (shoulders, elbows, wrists, hips; legs aren't drawn), and each hand as a palm outline plus one
-// line per finger, with dots only at the wrist and fingertips.
-const POSE_CONNECTIONS: [number, number][] = [
-  [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8], // nose - eyes - ears
-  [9, 10], // mouth
-  [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24]
-] // prettier-ignore
-const POSE_DOTS = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24] // nose, eyes, ears, body
-const HAND_CONNECTIONS: [number, number][] = [
-  [0, 1], [1, 4], // thumb
-  [0, 5], [5, 9], [9, 13], [13, 17], [17, 0], // palm
-  [5, 8], [9, 12], [13, 16], [17, 20] // fingers, base to tip
-] // prettier-ignore
-const HAND_DOTS = [0, 4, 8, 12, 16, 20] // wrist and fingertips
+type Shape = { connections: [number, number][]; dots: number[] }
+
+// A simplified skeleton, readable at a glance, in parts that can be turned off one by one: the
+// head, the upper body (legs aren't drawn), and each hand as a palm outline plus one line per
+// finger, with dots only at the wrist and fingertips.
+const POSE_PARTS: Partial<Record<SkeletonPart, Shape>> = {
+  head: {
+    connections: [
+      [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8], // nose - eyes - ears
+      [9, 10] // mouth
+    ], // prettier-ignore
+    dots: [0, 7, 8]
+  },
+  shoulders: { connections: [[11, 12]], dots: [11, 12] },
+  arms: { connections: [[11, 13], [13, 15], [12, 14], [14, 16]], dots: [13, 14] }, // prettier-ignore
+  wrists: { connections: [], dots: [15, 16] },
+  torso: { connections: [[11, 23], [12, 24], [23, 24]], dots: [23, 24] } // prettier-ignore
+}
+const HAND_PARTS: Partial<Record<SkeletonPart, Shape>> = {
+  wrists: { connections: [], dots: [0] },
+  hands: {
+    connections: [
+      [0, 1], [1, 4], // thumb
+      [0, 5], [5, 9], [9, 13], [13, 17], [17, 0], // palm
+      [5, 8], [9, 12], [13, 16], [17, 20] // fingers, base to tip
+    ], // prettier-ignore
+    dots: [4, 8, 12, 16, 20] // fingertips
+  }
+}
+// outlines from the face model, which follows the eyes and eyebrows much more closely than the pose
+const outline = (lines: { start: number; end: number }[]): Shape => ({
+  connections: lines.map(({ start, end }) => [start, end]),
+  dots: []
+})
+const FACE_PARTS: Partial<Record<SkeletonPart, Shape>> = {
+  eyes: outline([
+    ...FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
+    ...FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE
+  ]),
+  brows: outline([
+    ...FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW,
+    ...FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW
+  ])
+}
 const MIN_VISIBILITY = 0.5 // pose points less likely than this to be in view aren't drawn
 
 export const COLORS: Record<OverlayColor, string> = {
@@ -31,22 +63,22 @@ export const COLORS: Record<OverlayColor, string> = {
 type XY = readonly number[] // [x, y, ...] normalized
 
 /** Thick lines and large outlined dots, sized to the video (about 4.5 px lines and 7 px dots at
- *  1280 wide). Points with a visibility below MIN_VISIBILITY (pose only) are left out. */
+ *  1280 wide; `fine` lines are thinner, for the small outlines on the face). Points with a visibility below MIN_VISIBILITY (pose only) are left out. */
 function skeleton(
   ctx: CanvasRenderingContext2D,
   points: XY[],
-  connections: [number, number][],
-  dots: number[],
-  color: string
+  { connections, dots }: Shape,
+  color: string,
+  fine = false
 ): void {
   const { width: w, height: h } = ctx.canvas
   const shown = (i: number): boolean => (points[i]?.[3] ?? 1) >= MIN_VISIBILITY
-  const line = Math.max(3, w / 280)
+  const line = fine ? Math.max(1.5, w / 640) : Math.max(3, w / 280)
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
   // a dark edge under each line keeps it visible on light clothing and backgrounds
   for (const [width, style] of [
-    [line + 3, 'rgba(0, 0, 0, 0.55)'],
+    [line + (fine ? 1.5 : 3), 'rgba(0, 0, 0, 0.55)'],
     [line, color]
   ] as const) {
     ctx.strokeStyle = style
@@ -90,15 +122,33 @@ function outlined(
   ctx.fillText(text, x, y)
 }
 
-/** Pose (green) and hand (yellow) skeletons, drawn straight from the landmarks. */
-export function drawLandmarks(ctx: CanvasRenderingContext2D, frame: FrameMessage): void {
-  if (frame.pose) skeleton(ctx, frame.pose, POSE_CONNECTIONS, POSE_DOTS, COLORS.green)
-  for (const hand of frame.hands)
-    skeleton(ctx, hand.landmarks, HAND_CONNECTIONS, HAND_DOTS, COLORS.yellow)
+/** The shapes of the parts that are turned on, joined so they're drawn in one go. */
+function join(
+  parts: Partial<Record<SkeletonPart, Shape>>,
+  on: Preferences['skeletonParts']
+): Shape {
+  const shapes = Object.entries(parts).filter(([id]) => on[id as SkeletonPart])
+  return {
+    connections: shapes.flatMap(([, shape]) => shape.connections),
+    dots: shapes.flatMap(([, shape]) => shape.dots)
+  }
 }
 
-/** Everything Python computed: rest circles, hand labels, status lines, alerts, countdown.
- *  Alerts are drawn in the style chosen on the Live alerts tab. */
+/** Pose and face (green) and hand (yellow) skeletons, drawn straight from the landmarks. */
+export function drawLandmarks(
+  ctx: CanvasRenderingContext2D,
+  frame: FrameMessage,
+  parts: Preferences['skeletonParts']
+): void {
+  if (frame.pose) skeleton(ctx, frame.pose, join(POSE_PARTS, parts), COLORS.green)
+  if (frame.face) skeleton(ctx, frame.face.landmarks, join(FACE_PARTS, parts), COLORS.green, true)
+  for (const hand of frame.hands)
+    skeleton(ctx, hand.landmarks, join(HAND_PARTS, parts), COLORS.yellow)
+}
+
+/** Everything Python computed: alerts and countdown, plus the parts turned on of the skeleton
+ *  (rest circles) and the stats (hand labels and status lines).
+ *  Alerts are drawn in the style chosen on the Settings tab. */
 export function drawOverlay(
   ctx: CanvasRenderingContext2D,
   state: StateMessage | null,
@@ -111,30 +161,35 @@ export function drawOverlay(
     avgWpm: number | null // last 3 finished lines
     desiredWpm: number | null // the pace to aim for
   },
-  alertStyle: Style
+  preferences: Preferences
 ): void {
   const { width: w, height: h } = ctx.canvas
-  let y = 28
+  const showStat = (id: StatPart): boolean => preferences.showStats && preferences.statParts[id]
+  let y = 2 // bottom of the last line written at the top left
   const freshWpm =
     local.wpmUpdatedAt !== null && performance.now() / 1000 - local.wpmUpdatedAt < 1
       ? local.wpm
       : null
-  outlined(
-    ctx,
-    `FPS ${local.fps.toFixed(0)}   hands seen: ${local.handsSeen}   WPM: ${freshWpm?.toFixed(0) ?? '--'}` +
-      `   avg: ${local.avgWpm?.toFixed(0) ?? '--'} / ${local.desiredWpm?.toFixed(0) ?? '--'} desired`,
-    12,
-    y,
-    COLORS.white,
-    18
-  )
+  const header = [
+    showStat('fps') && `FPS ${local.fps.toFixed(0)}`,
+    showStat('hands_seen') && `hands seen: ${local.handsSeen}`,
+    showStat('wpm') && `WPM: ${freshWpm?.toFixed(0) ?? '--'}`,
+    showStat('pace') &&
+      `avg: ${local.avgWpm?.toFixed(0) ?? '--'} / ${local.desiredWpm?.toFixed(0) ?? '--'} desired`
+  ].filter(Boolean)
+  if (header.length) {
+    y += 26
+    outlined(ctx, header.join('   '), 12, y, COLORS.white, 18)
+  }
 
   if (!local.connected || !state) {
     outlined(ctx, 'analysis service not connected yet (starting...)', 12, y + 26, COLORS.yellow, 18)
     return
   }
 
-  for (const c of state.rest_circles) {
+  for (const c of preferences.showSkeleton && preferences.skeletonParts.rest
+    ? state.rest_circles
+    : []) {
     ctx.strokeStyle = c.active ? COLORS.green : COLORS.white
     ctx.lineWidth = 1
     ctx.beginPath()
@@ -142,21 +197,25 @@ export function drawOverlay(
     ctx.stroke()
   }
 
-  for (const l of state.hand_labels)
+  for (const l of showStat('hand_angles') ? state.hand_labels : [])
     outlined(ctx, l.text, l.x * w + 10, l.y * h + 20, COLORS.yellow, 18)
 
   for (const line of state.lines) {
+    // 'body' = no body detected, which is why tilt and hand movement are missing
+    if (line.stat === 'body' ? !showStat('tilt') && !showStat('hands') : !showStat(line.stat))
+      continue
     y += 26
     outlined(ctx, line.text, 12, y, COLORS[line.color], 18)
   }
 
   const cal = state.calibration
-  if (cal.message)
+  // also shown under the video, so it's only drawn as a stat
+  if (cal.message && showStat('calibration'))
     outlined(ctx, cal.message, 12, y + 26, cal.calibrated ? COLORS.green : COLORS.yellow, 18)
 
   const top = Math.max(150, y + 26 + 70) // below the status lines and calibration message
-  if (alertStyle === 'banner') state.alerts.forEach((text, i) => banner(ctx, top, i, text))
-  if (alertStyle === 'compact') state.alerts.forEach((text, i) => pill(ctx, i, text))
+  if (preferences.style === 'banner') state.alerts.forEach((text, i) => banner(ctx, top, i, text))
+  if (preferences.style === 'compact') state.alerts.forEach((text, i) => pill(ctx, i, text))
   // 'silent': no alerts on screen
   if (cal.phase === 'arming') {
     // the service says what's missing: "Waiting to calibrate: show both hands, hold still"

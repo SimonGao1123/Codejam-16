@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import AlertPreview from './AlertPreview'
 import AlertRules from './AlertRules'
+import WebcamDisplay from './WebcamDisplay'
 import { rules, type Rule, type RuleSettings, type Style } from './ruleDefinitions'
 import { useAlertPreferences } from './useAlertPreferences'
 import './liveAlerts.css'
 
-export default function LiveAlerts(): React.JSX.Element {
+export default function Settings(): React.JSX.Element {
   const [preferences, setPreferences] = useAlertPreferences()
   const [selected, setSelected] = useState<Rule>(rules[0])
   const [preview, setPreview] = useState(false)
@@ -30,8 +31,8 @@ export default function LiveAlerts(): React.JSX.Element {
       <div className="la-shell">
         <header className="la-header">
           <p className="la-product">Colloquia</p>
-          <h1>Live alerts</h1>
-          <p>Choose what to watch for while you practice.</p>
+          <h1>Settings</h1>
+          <p>Choose what to watch for and what to show while you practice.</p>
         </header>
         <div className="la-layout">
           <AlertRules
@@ -43,17 +44,26 @@ export default function LiveAlerts(): React.JSX.Element {
             }}
             updateRule={updateRule}
           />
-          <AlertPreview
-            cue={selected.cue}
-            enabled={settings.enabled}
-            preview={preview}
-            style={preferences.style}
-            onStyleChange={(style: Style) => {
-              setPreview(false)
-              setPreferences((current) => ({ ...current, style }))
-            }}
-            onPreview={() => setPreview(true)}
-          />
+          <div className="la-column">
+            <AlertPreview
+              cue={selected.cue}
+              enabled={settings.enabled}
+              preview={preview}
+              style={preferences.style}
+              onStyleChange={(style: Style) => {
+                setPreview(false)
+                setPreferences((current) => ({ ...current, style }))
+              }}
+              onPreview={() => setPreview(true)}
+            />
+            <WebcamDisplay
+              showSkeleton={preferences.showSkeleton}
+              showStats={preferences.showStats}
+              skeletonParts={preferences.skeletonParts}
+              statParts={preferences.statParts}
+              onChange={(change) => setPreferences((current) => ({ ...current, ...change }))}
+            />
+          </div>
         </div>
       </div>
     </main>

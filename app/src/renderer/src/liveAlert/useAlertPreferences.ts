@@ -7,6 +7,7 @@ import {
   type Rule,
   type RuleSettings
 } from './ruleDefinitions'
+import { readParts, skeletonParts, statParts } from './webcamParts'
 
 const storageKey = 'presentation-helper:live-alerts:v6'
 const handsLegacyStorageKey = 'presentation-helper:live-alerts:v5'
@@ -17,6 +18,10 @@ const legacyStorageKey = 'presentation-helper:live-alerts:v2'
 function defaults(): Preferences {
   return {
     style: 'banner',
+    showSkeleton: false,
+    showStats: false,
+    skeletonParts: readParts(skeletonParts),
+    statParts: readParts(statParts),
     rules: Object.fromEntries(
       rules.map((rule) => [rule.id, defaultRule(rule)])
     ) as Preferences['rules']
@@ -49,6 +54,10 @@ function readPreferences(): Preferences {
       | null
     if (saved && styles.some((style) => style.id === saved.style)) {
       preferences.style = saved.style
+      preferences.showSkeleton = saved.showSkeleton === true
+      preferences.showStats = saved.showStats === true
+      preferences.skeletonParts = readParts(skeletonParts, saved.skeletonParts)
+      preferences.statParts = readParts(statParts, saved.statParts)
       for (const rule of rules) {
         const savedEntry = saved.rules?.[rule.id]
         // The first pace rule shipped with a hidden 15 s cooldown. It now has a
@@ -101,7 +110,7 @@ function readPreferences(): Preferences {
   return preferences
 }
 
-// One shared copy for the whole app, so a change on the Live alerts tab reaches the practice
+// One shared copy for the whole app, so a change on the Settings tab reaches the practice
 // session (which stays mounted in the background) straight away.
 let current = readPreferences()
 const listeners = new Set<() => void>()

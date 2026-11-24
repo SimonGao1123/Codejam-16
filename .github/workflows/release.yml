@@ -1,0 +1,65 @@
+# Builds the app for each platform and puts the installers in a draft GitHub release.
+# To release: set "version" in app/package.json, then push the matching tag (e.g. v1.0.0).
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include: # each on its own system: PyInstaller can't build for another one
+          - { os: macos-15, flag: --mac } # Apple Silicon
+          - { os: windows-latest, flag: --win }
+          - { os: ubuntu-22.04, flag: --linux } # older glibc, so it also runs on older systems
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check that the tag matches the app version
+        run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./app/package.json').version")"
+      - name: Bundle the Python service
+        working-directory: service
+        run: >-
+          uv run --no-dev --with "pyinstaller>=6,<7" pyinstaller run_service.py
+          --name presentation-service --onedir --noconfirm --paths .
+          --collect-all moonshine_voice --collect-all fastembed
+      - name: Build the app
+        working-directory: app
+        run: |
+          npm ci
+          npx electron-vite build
+          npx electron-builder ${{ matrix.flag }} --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            app/dist/*.dmg
+            app/dist/*.exe
+            app/dist/*.AppImage
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" installers/* --draft --generate-notes --repo "$GITHUB_REPOSITORY"

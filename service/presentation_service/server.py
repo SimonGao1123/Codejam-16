@@ -63,7 +63,7 @@ class Session:
         self.audio_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="audio")
 
     def apply_settings(self, rules):
-        """Live alerts settings from the app: {rule id: {enabled, threshold, duration, cooldown}}."""
+        """Settings from the app: {rule id: {enabled, threshold, duration, cooldown}}."""
         self.webcam.apply_settings(rules)
         self.audio.apply_settings(rules)
         log.info("alert settings updated (%d rules, %d off)", len(rules),
@@ -78,7 +78,7 @@ async def webcam_connection(ws, session):
             voice = session.audio.voice_line
             state = session.webcam.process(
                 msg,
-                extra_lines=[{"text": voice, "color": "white"}] if voice else [],
+                extra_lines=[{"stat": "voice", "text": voice, "color": "white"}] if voice else [],
                 extra_alerts=session.alerts.active(),
             )
             await ws.send(json.dumps(state))

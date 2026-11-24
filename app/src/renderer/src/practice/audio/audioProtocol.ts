@@ -38,7 +38,7 @@ export interface ScriptControlMessage {
 }
 
 /** The time the user has to present; null = not set. With a script, Python sets the desired pace
- *  to script words / this time (otherwise the Live alerts Target pace). Kept across sessions. */
+ *  to script words / this time (otherwise the Settings Target pace). Kept across sessions. */
 export interface TargetTimeMessage {
   type: 'target_time'
   seconds: number | null
@@ -80,7 +80,7 @@ export interface TranscriptMessage {
   desired_source?: PaceSource
 }
 
-/** script = script words / the time the user has; setting = the Live alerts Target pace slider */
+/** script = script words / the time the user has; setting = the Settings Target pace slider */
 export type PaceSource = 'script' | 'setting'
 
 export interface PaceTargetMessage {

@@ -1,5 +1,6 @@
 {
   "name": "app",
+  "productName": "Colloquia",
   "version": "1.0.0",
   "description": "Presentation Helper: rehearse presentations with live feedback on posture, voice, filler words and your script",
   "main": "./out/main/index.js",

@@ -59,11 +59,11 @@ export interface AudioAnalysis {
 }
 
 /** `script`: the user's script text; empty = no script (comparison off).
- *  `targetMinutes`: the time the user has to present; null = not set. */
+ *  `targetSeconds`: the time the user has to present; null = not set. */
 export function useAudioAnalysis(
   micStream: MediaStream | null,
   script: string,
-  targetMinutes: number | null,
+  targetSeconds: number | null,
   startedAt: number | null,
   voiceBaseline: VoiceBaseline | null
 ): AudioAnalysis {
@@ -90,7 +90,6 @@ export function useAudioAnalysis(
   const [desiredWpm, setDesiredWpm] = useState<number | null>(null)
   const [desiredSource, setDesiredSource] = useState<PaceSource | null>(null)
   const [paceTarget, setPaceTarget] = useState<PaceTargetMessage | null>(null)
-  const targetSeconds = targetMinutes && targetMinutes > 0 ? targetMinutes * 60 : null
   const targetSecondsRef = useRef(targetSeconds)
   const scriptRef = useRef(script.trim() || null) // last script sent to Python
   const latestScriptRef = useRef(script.trim() || null) // latest typed, maybe not sent yet

@@ -1,4 +1,7 @@
 .venv/
+service/build/
+service/dist/
+service/*.spec
 __pycache__/
 *.pyc
 .DS_Store
