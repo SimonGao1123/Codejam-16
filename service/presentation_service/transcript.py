@@ -3,18 +3,17 @@ Live transcript with filler-word detection and speaking pace, taking audio pushe
 Electron app instead of reading the mic. Based on the current Moonshine script:
 
   - Moonshine streams the transcript (partial text while you talk, a finished line on a pause).
-    It writes "um" and "uh" itself, so fillers are counted straight from its text.
+    It writes "um" and "uh" itself, nudged by key-term biasing, so fillers are found straight in its
+    text (fillers.py). Ones it drops again when it finishes a line are put back.
   - Alerts fire from partial text for speed. Totals come from finished lines only,
     because partials get revised as more audio arrives.
   - Pace: Moonshine's streaming model gives no per-word timings, but each finished line has a
     start time and duration, and lines end at pauses. So a line's words are spread evenly over its
     duration (`word_times`, used for the final score). The live WPM also counts the words of the
     line still being spoken, and webrtcvad tells it when the speaker has paused.
-  - Optional: pass a noise profile (a couple of seconds of room audio) and each chunk is cleaned
-    with noisereduce before it reaches Moonshine.
 
 Interface: feed() / flush() / reset(), returning events like ("partial", text),
-("sentence", text), ("filler", word); plus word_times, pace_history and live_wpm() for pace.
+("sentence", text with fillers in [brackets]), ("filler", word); plus word_times, pace_history and live_wpm() for pace.
 All times are seconds of session audio (the audio clock), like Moonshine's line start times.
 """
 
@@ -27,6 +26,8 @@ import webrtcvad
 from moonshine_voice import Transcriber as MoonshineTranscriber
 from moonshine_voice import TranscriptEventListener, get_model_for_language
 
+from .fillers import FILLERS, LineHesitations, find_fillers
+
 log = logging.getLogger(__name__)
 
 # ---------- settings ----------
@@ -35,28 +36,20 @@ FRAME = 480                  # 30 ms: the frame size audio_analysis.py feeds in 
 FRAME_SEC = FRAME / SR       # 0.03 s
 CHUNK = 1600                 # 0.1 s: frames are batched to this size before Moonshine
 UPDATE_INTERVAL = 0.5        # how often Moonshine refreshes its partial text (seconds)
+KEYTERMS = ["um", "uh"]      # Moonshine is biased towards writing these; it tends to leave them out...
+KEYTERM_BOOST = 1.5          # ...higher finds more of them but also makes more up (benchmarks/README.md)
 VAD_LEVEL = 2                # 0-3, higher = stricter about what counts as speech
 LIVE_WPM_WINDOW_S = 12       # short enough to react, long enough not to jump word-by-word
 LIVE_WPM_PAUSE_S = 0.8       # show N/A promptly when the speaker has paused
 
-# matched against lowercase text
-FILLER_PATTERNS = {
-    "um": r"\bum\b",
-    "uh": r"\buh\b",
-    "erm": r"\berm\b",
-    "hmm": r"\bhmm\b",
-    "like": r"\blike\b",
-    "you know": r"\byou know\b",
-    "so": r"\bso\b",
-}
-FILLERS = list(FILLER_PATTERNS)
-
 END_PUNCT = (".", ",", "?", "!")     # don't add a period after any of these
 
 
-def count_fillers(text):
-    text = text.lower()
-    return {f: len(re.findall(p, text)) for f, p in FILLER_PATTERNS.items()}
+def count_fillers(text, unfinished=False):
+    counts = {f: 0 for f in FILLERS}
+    for _, _, filler in find_fillers(text, unfinished):
+        counts[filler] += 1
+    return counts
 
 
 def sentence_text(text):
@@ -68,6 +61,13 @@ def sentence_text(text):
     if not text.endswith(END_PUNCT):                   # Moonshine sometimes adds punctuation already
         text += "."
     return re.sub(r"\bi\b", "I", text)                 # lone "i" -> "I" (also i'm, i'll)
+
+
+def mark_fillers(sentence):
+    """'So I think um it works.' -> '[So] I think [um] it works.' (the app highlights the bracketed words)"""
+    for start, end, _ in sorted(find_fillers(sentence), reverse=True):
+        sentence = f"{sentence[:start]}[{sentence[start:end]}]{sentence[end:]}"
+    return sentence
 
 
 def spoken_words(text):
@@ -92,16 +92,10 @@ class _Listener(TranscriptEventListener):
 class Transcriber:
     """Feed 30 ms frames of 16 kHz int16 audio; returns transcript events as they happen."""
 
-    def __init__(self, model, noise=None):
-        """model: what load_moonshine() returns.
-        noise: optional float32 array of room noise at 16 kHz (about 2 s) to clean audio with."""
+    def __init__(self, model):
+        """model: what load_moonshine() returns."""
         self.model = model
-        self.noise = noise
         self.stream = None
-        self.nr = None
-        if noise is not None:
-            import noisereduce
-            self.nr = noisereduce
         self.vad = webrtcvad.Vad(VAD_LEVEL)
         self.reset()
 
@@ -111,9 +105,10 @@ class Transcriber:
         self.pending = deque()                        # events from Moonshine's callbacks, drained by feed()
         self.sentences = []                           # every finished sentence, as text
         self.totals = {f: 0 for f in FILLERS}
-        self.filler_checkpoints = []                  # (line start time, filler) for each filler counted
+        self.filler_checkpoints = []                  # (estimated time, filler) for each filler counted
         self.alerted = {f: 0 for f in FILLERS}        # fillers already alerted from this line's partials
         self.last_partial = ""
+        self.hesitations = LineHesitations()          # um / uh in this line's partials
         # pace
         self.frame_count = 0                          # audio clock: frame_count * FRAME_SEC seconds
         self.word_times = []                          # (start, end) per finished word (estimated in-line)
@@ -151,17 +146,19 @@ class Transcriber:
         if text == self.last_partial:
             return
         self.last_partial = text
+        self.hesitations.add_partial(text)
         self.pending.append(("partial", text))
-        for w in self._new_fillers(count_fillers(text)):
+        for w in self._new_fillers(count_fillers(text, unfinished=True)):
             self.pending.append(("filler", w))
 
     def _on_final(self, text, start_time, duration=0.0):
+        text = self.hesitations.restore(text)
+        self.hesitations = LineHesitations()
         counts = count_fillers(text)
         for w in self._new_fillers(counts):            # ones the partials didn't show
             self.pending.append(("filler", w))
         for w in FILLERS:
             self.totals[w] += counts[w]
-            self.filler_checkpoints += [(start_time, w)] * counts[w]
             self.alerted[w] = 0                        # reset for the next line
 
         # no per-word timings from the streaming model: spread the line's words over its duration
@@ -171,11 +168,14 @@ class Transcriber:
             self.word_times += [(start_time + i * step, start_time + (i + 1) * step)
                                 for i in range(len(words))]
             self.lines.append((start_time, start_time + duration, len(words)))
+        for at, _, w in find_fillers(text):
+            said = len(spoken_words(text[:at]))        # words of the line before this filler
+            self.filler_checkpoints.append((start_time + duration * said / len(words), w))
 
         sentence = sentence_text(text)
         if sentence:
             self.sentences.append(sentence)
-            self.pending.append(("sentence", sentence))
+            self.pending.append(("sentence", mark_fillers(sentence)))
         self.last_partial = ""
         self.pending.append(("partial", ""))           # clear the partial line on screen
         log.debug("line completed: %r (%.2fs + %.2fs)", text, start_time, duration)
@@ -196,10 +196,6 @@ class Transcriber:
         self.buf = np.concatenate([self.buf, samples])
         while len(self.buf) >= CHUNK:
             chunk, self.buf = self.buf[:CHUNK], self.buf[CHUNK:]
-            if self.nr is not None:
-                chunk = self.nr.reduce_noise(
-                    y=chunk, sr=SR, y_noise=self.noise, stationary=True
-                ).astype(np.float32)
             self.stream.add_audio(chunk, SR)
         events = self.drain()
         self._record_live_pace()
@@ -240,4 +236,9 @@ class Transcriber:
 def load_moonshine(language="en"):
     """Load the Moonshine model once (downloads and caches it the first time)."""
     model_path, model_arch = get_model_for_language(language)
-    return MoonshineTranscriber(model_path=model_path, model_arch=model_arch)
+    # by default every update hands back the audio of the whole session so far, as Python lists of
+    # floats: after a few minutes that takes longer than the speech recognition itself
+    model = MoonshineTranscriber(model_path=model_path, model_arch=model_arch,
+                                 options={"return_audio_data": "false", "keyterm_boost": str(KEYTERM_BOOST)})
+    model.set_keyterms(KEYTERMS)
+    return model

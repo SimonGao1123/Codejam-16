@@ -153,15 +153,15 @@ export default function TranscriptPanel({
   )
 }
 
-// the counted filler words, plus the [um] / [uh] / [um?] markers Python inserts for detected fillers
-const FILLER_PATTERN = /(\[[a-z?]+\]|\b(?:um|uh|like|you know|so)\b)/i
+// Python brackets the words it counted as fillers, e.g. [um] (not every "like" or "so" is one)
+const FILLER_PATTERN = /(\[[a-z ?]+\])/i
 
 /** Highlights every filler the counter counted, so the transcript matches the numbers. */
 function highlightFillers(sentence: string): React.ReactNode[] {
   return sentence.split(FILLER_PATTERN).map((part, i) =>
     i % 2 ? (
       <mark key={i} className="ph-filler-mark">
-        {part.startsWith('[') ? part.slice(1, -1) : part}
+        {part.slice(1, -1)}
       </mark>
     ) : (
       part

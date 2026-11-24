@@ -21,7 +21,7 @@ VOICE_RULES = {VoiceMonitor.VOLUME_SPIKE: ("volume", "volume_spike"),
                VoiceMonitor.PAUSE: ("pause", "pause")}  # text -> (rule id, VoiceMonitor attribute)
 SCRIPT_RULES = {"jump": "out_of_order", "back": "out_of_order", "off_topic": "off_script",
                 "stuck": "stuck"}             # script event kind -> Live alerts rule id
-SCRIPT_CHECK_S = 1.5            # compare the transcript with the script at most this often
+SCRIPT_CHECK_S = 0.5            # compare the transcript with the script at most this often
 SPEECH_MARGIN_DB = 10           # louder than the room's measured noise by this much = speaking
 SILENCE_LIMITS_DBFS = (-70.0, -30.0)   # keep the "not speaking" level sane if the measurement was off
 QUIET_SPEECH_HEADROOM_DB = 12   # reserve a range where quiet audio can count without a pitch reading
@@ -44,6 +44,7 @@ class AudioAnalyzer:
         self.noise_floor = None                     # room noise (dBFS) measured before the session
         self.script_chunks = []                     # the user's script, split into parts ([] = no script)
         self.script_tracker = None
+        self.script_vectors = None                  # the last script's embeddings, reused after an edit
         self.script_words = 0                       # words in the script, for the desired pace
         self.target_seconds = None                  # time the user has to present (None = not set)
         self.reset()
@@ -84,13 +85,15 @@ class AudioAnalyzer:
         """The user's script (None / empty = no script, comparison off) -> script_loaded message."""
         self.script_chunks = chunk_script(text) if text and text.strip() else []
         self.script_words = len(spoken_words(text)) if self.script_chunks else 0
+        if self.script_tracker:
+            self.script_vectors = self.script_tracker.vectors
         self.script_tracker = None
         self._build_tracker()
         return self.script_loaded_message()
 
     def _build_tracker(self):
         if self.script_chunks and self.embedder and not self.script_tracker:
-            self.script_tracker = ScriptTracker(self.script_chunks, self.embedder)
+            self.script_tracker = ScriptTracker(self.script_chunks, self.embedder, known=self.script_vectors)
             self._configure_script()
             self.last_script_text, self.last_script_check = "", -float("inf")
             return True
@@ -109,10 +112,12 @@ class AudioAnalyzer:
         t = self.script_tracker
         if not t:
             return out
+        now = time.monotonic()
+        if not force and now - self.last_script_check < SCRIPT_CHECK_S:
+            return out
         tr = self.transcriber
         text = " ".join(tr.sentences + [tr.last_partial]).strip()
-        now = time.monotonic()
-        if text == self.last_script_text or (not force and now - self.last_script_check < SCRIPT_CHECK_S):
+        if text == self.last_script_text:
             return out
         first = self.last_script_text == ""
         self.last_script_text, self.last_script_check = text, now
@@ -361,7 +366,7 @@ class AudioAnalyzer:
         return round(len(recent) * 60 / duration, 1)
 
     def live_wpm(self):
-        """Fast Vosk-partial estimate for the overlay; None while the speaker is paused."""
+        """Fast estimate from the partial transcript for the overlay; None while the speaker is paused."""
         return self.transcriber.live_wpm()
 
     def set_target_time(self, seconds):

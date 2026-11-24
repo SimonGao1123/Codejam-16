@@ -1,7 +1,7 @@
 # Webcam analysis protocol (Electron ↔ Python)
 
 The Electron app captures the webcam, runs MediaPipe (pose, hands, face) on the GPU and draws the
-skeleton itself. It sends the raw landmarks to the **webcam analysis service** (Python), which does
+skeleton itself. It sends the landmarks the analysis uses to the **webcam analysis service** (Python), which does
 all the calculations and replies with what to draw on top of the video.
 
 - Transport: WebSocket at **`ws://127.0.0.1:<port>/webcam`**, JSON text messages. The port is chosen by the Electron app,
@@ -10,6 +10,7 @@ all the calculations and replies with what to draw on top of the video.
 - TypeScript types: `app/src/renderer/src/practice/camera/webcamProtocol.ts`. Keep this file and that one in sync.
 - Electron reconnects every second if the service isn't running, and drops frames instead of
   queueing them when the service falls behind.
+- WebSocket compression is off: it's all on one machine, so it would only cost time.
 
 ## Coordinates
 
@@ -22,16 +23,29 @@ all the calculations and replies with what to draw on top of the video.
 
 ### `frame`: sent for every processed camera frame (~30 per second)
 
+Only the values the analysis uses (about 0.5 KB; everything MediaPipe finds would be 14 KB):
+
 ```json
 {
   "type": "frame",
   "t": 12.345,
   "width": 1280, "height": 720,
-  "pose": [[x, y, z, visibility], ...33] | null,
-  "hands": [{"handedness": "Left", "score": 0.97, "landmarks": [[x, y, z], ...21]}],
-  "face": {"landmarks": [[x, y, z], ...478], "blendshapes": {"eyeLookDownLeft": 0.12, ...}} | null
+  "pose": [[x, y, visibility], ...4] | null,
+  "hands": [{"side": "L", "points": [[x, y], ...6]}],
+  "face": {"points": [[x, y, z], [x, y, z], [x, y], [x, y]], "eyes_down": [0.12, 0.1]} | null
 }
 ```
+
+| Field | MediaPipe landmarks, in order |
+|---|---|
+| `pose` | 11, 12 (shoulders), 15, 16 (wrists) |
+| `hands[].points` | 0 (wrist), 4, 8, 12, 20 (fingertips), 9 (middle knuckle); `side` is as seen in the mirrored view |
+| `face.points` | 10 (forehead), 152 (chin), 234, 454 (sides); z only for the first two |
+| `face.eyes_down` | blendshapes `eyeLookDownLeft`, `eyeLookDownRight` |
+
+The lists are in `webcamProtocol.ts` (`compactFrame`) and `webcam_analysis.py`: change both together. Frames with
+every landmark (recordings from before this) still work: `compact_frame` in `webcam_analysis.py` cuts them down.
+The app sends at most 3 frames ahead of the replies and drops the rest, so it never lags further and further.
 
 `t` is seconds on a monotonic clock. Use it for all timing (alert hold times, calibration
 countdown, speeds) instead of the wall clock, so recorded sessions replay identically.
@@ -65,12 +79,15 @@ scoring are paused until calibration is done. Without `when_ready`, recording st
 Sent when the connection opens and whenever a rule changes on the Settings tab.
 
 ```json
-{"type": "settings", "rules": {
+{"type": "settings", "display": ["tilt", "hands", "rest"], "rules": {
   "tilt": {"enabled": true, "threshold": 6, "duration": 1.5, "cooldown": 0},
   "face": {"enabled": false, "threshold": null, "duration": 1, "cooldown": 0},
   ...
 }}
 ```
+
+`display`: the stats being shown (and `rest` for the hand rest spots); the service leaves the others out of its
+replies. Without it, everything is sent.
 
 | Rule id | Alert | Threshold |
 |---|---|---|
@@ -92,6 +109,8 @@ compact / silent) isn't sent: Electron applies it when drawing `alerts`.
 ## Python → Electron
 
 ### `state`: send one per `frame` (the overlay Electron draws until the next one arrives)
+
+After the first reply, only `type`, `t` and the fields that **changed** are sent; Electron keeps the latest of each.
 
 ```json
 {
@@ -130,8 +149,7 @@ compact / silent) isn't sent: Electron applies it when drawing `alerts`.
 `service/presentation_service/webcam_analysis.py`: the analysis from
 `experiments/mediapipe_webcam/webcam_test.py`, ported without OpenCV/MediaPipe (`Calibration`,
 `HandMotion`, `Alert`, `shoulder_tilt`, `head_pitch`, `eyes_down`, `hand_angle`, `match_hands`, and
-the same thresholds). Each `[x, y, z, v]` list is wrapped in a small object with `.x` / `.y` / `.z`
-/ `.visibility`, so the functions are unchanged.
+the same thresholds).
 
 The audio side adds to each `state`: a `voice: ... Hz ... dBFS` status line (with "(not speaking)"
 at the room's silence level), and voice / filler / script alerts in `alerts` (see

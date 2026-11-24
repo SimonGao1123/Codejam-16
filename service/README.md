@@ -26,12 +26,9 @@ uv run python -m presentation_service --debug            # listens on 8766
 ANALYSIS_SERVICE_PORT=8766 npm run dev                   # in app/: connect to it instead of starting one
 ```
 
-Options: `--port 8766`, `--whisper base.en` (more accurate um/uh check, slower), `--whisper ''`
-(no Whisper: suspected fillers show as `[um?]`), `--debug` (log every filler check).
+Options: `--port 8766`, `--debug` (log every finished line).
 
-- Vosk uses `models/vosk-model-en-us-0.22` when installed, otherwise it uses the bundled
-  `experiments/gap_heuristic/vosk-model-small-en-us-0.15`.
-- Whisper `tiny.en` downloads to `~/.cache/huggingface/` on first run (~75 MB, needs internet once).
+- Moonshine's speech-to-text model downloads on first run (needs internet once).
 - The script comparison model (all-MiniLM-L6-v2 via `fastembed`, ONNX) downloads to
   `~/.cache/fastembed/` on first run (~90 MB). `script_compare.py` is a copy of
   `experiments/script_compare/script_match.py`: change it there and copy it over.
@@ -41,3 +38,8 @@ Options: `--port 8766`, `--whisper base.en` (more accurate um/uh check, slower),
 ```sh
 uv run pytest -q      # the speech tests use macOS `say`; they're skipped elsewhere
 ```
+
+## Benchmarks
+
+`benchmarks/` measures transcript and filler accuracy, alert delay and CPU on real recordings, and
+compares Moonshine with the earlier Vosk + Whisper pipeline: results and how to run in `benchmarks/README.md`.

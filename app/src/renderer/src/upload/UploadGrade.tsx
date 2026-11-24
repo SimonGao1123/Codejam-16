@@ -9,6 +9,7 @@ import {
   type TranscriptMessage,
   type VoiceMessage
 } from '../practice/audio/audioProtocol'
+import { compactFrame } from '../practice/camera/webcamProtocol'
 import { createLandmarkers, detect, type Landmarkers } from '../practice/camera/webcamLandmarkers'
 import type { VoiceSample } from '../practice/components/VoiceGraph'
 import ScriptEditor from '../practice/components/ScriptEditor'
@@ -313,7 +314,9 @@ export default function UploadGrade(): React.JSX.Element {
           }, 4000)
           webcamWs!.onopen = (): void => {
             clearTimeout(timer)
-            webcamWs?.send(JSON.stringify({ type: 'settings', rules: preferences.rules }))
+            webcamWs?.send(
+              JSON.stringify({ type: 'settings', rules: preferences.rules, display: [] }) // draws no overlay
+            )
             resolve()
           }
           webcamWs!.onerror = (): void => {
@@ -447,7 +450,7 @@ export default function UploadGrade(): React.JSX.Element {
           await seekVideo(vid, t)
           try {
             const frameMsg = detect(landmarkers, vid, Math.max(0.001, t))
-            webcamWs.send(JSON.stringify(frameMsg))
+            webcamWs.send(JSON.stringify(compactFrame(frameMsg)))
           } catch (detErr) {
             console.warn('Frame detection warning at', t, detErr)
           }

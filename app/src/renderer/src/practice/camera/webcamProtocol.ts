@@ -2,8 +2,8 @@
 // Full description: docs/webcam-protocol.md. Keep the two in sync.
 //
 // Electron runs MediaPipe and draws the skeleton itself (no lag). Every processed frame it
-// sends the raw landmarks; Python does all the calculations and replies with an overlay
-// state that Electron draws on top of the video, the same way webcam_test.py does.
+// sends the few landmarks the analysis uses; Python does all the calculations and replies with what
+// changed in the overlay state that Electron draws on top of the video.
 
 import type { RuleSettings } from '../../liveAlert/ruleDefinitions'
 import type { StatPart } from '../../liveAlert/webcamParts'
@@ -27,16 +27,54 @@ export interface FaceData {
   blendshapes: Record<string, number> // 52 scores, e.g. eyeLookDownLeft
 }
 
-// ---- Electron -> Python
-
-export interface FrameMessage {
-  type: 'frame'
+/** Everything MediaPipe found in one camera frame. Drawn by webcamDraw.ts; Python gets compactFrame(). */
+export interface FrameData {
   t: number // seconds, monotonic (performance.now() / 1000); use this, not wall-clock time
   width: number // video size in pixels, to turn normalized coords into pixels
   height: number
   pose: PoseLandmark[] | null // 33 pose landmarks, or null if no body
   hands: HandData[] // 0-2 hands
   face: FaceData | null
+}
+
+// ---- Electron -> Python
+
+// the landmarks the analysis uses, in the order Python expects them (webcam_analysis.py)
+const POSE_LANDMARKS = [11, 12, 15, 16] // shoulders, wrists
+const HAND_LANDMARKS = [0, 4, 8, 12, 20, 9] // wrist, four fingertips, middle knuckle
+const FACE_LANDMARKS = [10, 152, 234, 454] // forehead, chin, both sides of the face
+
+export interface FrameMessage {
+  type: 'frame'
+  t: number
+  width: number
+  height: number
+  pose: [number, number, number][] | null // POSE_LANDMARKS: [x, y, visibility]
+  hands: { side: 'L' | 'R'; points: [number, number][] }[] // HAND_LANDMARKS: [x, y]
+  face: {
+    points: number[][] // FACE_LANDMARKS: [x, y, z] for the forehead and chin, [x, y] for the sides
+    eyes_down: [number, number] // blendshapes eyeLookDownLeft, eyeLookDownRight
+  } | null
+}
+
+/** What Python needs of a frame: about 3% of the size of everything MediaPipe found. */
+export function compactFrame(frame: FrameData): FrameMessage {
+  const { pose, hands, face } = frame
+  return {
+    type: 'frame',
+    t: Math.round(frame.t * 1e4) / 1e4,
+    width: frame.width,
+    height: frame.height,
+    pose: pose && POSE_LANDMARKS.map((i) => [pose[i][0], pose[i][1], pose[i][3]]),
+    hands: hands.map((hand) => ({
+      side: hand.handedness === 'Left' ? 'L' : 'R',
+      points: HAND_LANDMARKS.map((i) => [hand.landmarks[i][0], hand.landmarks[i][1]])
+    })),
+    face: face && {
+      points: FACE_LANDMARKS.map((i, n) => face.landmarks[i].slice(0, n < 2 ? 3 : 2)),
+      eyes_down: [face.blendshapes.eyeLookDownLeft ?? 0, face.blendshapes.eyeLookDownRight ?? 0]
+    }
+  }
 }
 
 export interface CalibrateMessage {
@@ -51,6 +89,7 @@ export interface CalibrateMessage {
 export interface SettingsMessage {
   type: 'settings' // the Settings tab's rules; sent on connect and whenever they change
   rules: Record<string, RuleSettings> // rule id (ruleDefinitions.ts) -> settings
+  display: string[] // the stats (and 'rest') being shown; Python leaves the others out of its replies
 }
 
 export type ClientMessage = FrameMessage | CalibrateMessage | SettingsMessage
@@ -88,6 +127,7 @@ export interface CalibrationState {
   message: string
 }
 
+/** The client keeps the latest of each field; a reply only has `type`, `t` and the fields that changed. */
 export interface StateMessage {
   type: 'state'
   t: number // the frame time this state answers
@@ -98,4 +138,4 @@ export interface StateMessage {
   calibration: CalibrationState
 }
 
-export type ServerMessage = StateMessage
+export type ServerMessage = Partial<StateMessage> & Pick<StateMessage, 'type' | 't'>

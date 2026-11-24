@@ -70,7 +70,7 @@ export interface VoiceMessage {
 
 export interface TranscriptMessage {
   type: 'transcript' // whenever the transcript changes
-  new_sentences: string[] // finished sentences to append, e.g. "So I think [um] it works."
+  new_sentences: string[] // finished sentences to append, e.g. "[So] I think [um] it works."
   partial: string // words of the sentence still being spoken (replaces the previous partial)
   new_fillers: FillerWord[] // fillers detected since the last message
   fillers: Record<FillerWord, number> // running totals for the session

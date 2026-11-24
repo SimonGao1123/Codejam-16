@@ -151,7 +151,7 @@ semitones below `typical_hz`. Crossing either limit for the configured duration 
 ```json
 {
   "type": "transcript",
-  "new_sentences": ["So I think [um] the results are really good."],
+  "new_sentences": ["[So] I think [um] the results are really good."],
   "partial": "the main idea is",
   "new_fillers": ["um"],
   "fillers": {"um": 1, "uh": 0, "like": 0, "you know": 0, "so": 1, "filler?": 0},
@@ -165,7 +165,7 @@ semitones below `typical_hz`. Crossing either limit for the configured duration 
 
 | Field | Meaning |
 |---|---|
-| `new_sentences` | Finished sentences to **append**. A sentence ends when Vosk hears a pause |
+| `new_sentences` | Finished sentences to **append**, counted fillers in `[brackets]`. A sentence ends when Moonshine hears a pause |
 | `partial` | Words of the sentence still being spoken; **replaces** the previous partial |
 | `new_fillers` | Fillers detected since the last message (Electron flashes the counter) |
 | `fillers`, `total` | Running counts for the session, including fillers already heard in the current partial |
@@ -181,8 +181,8 @@ semitones below `typical_hz`. Crossing either limit for the configured duration 
 
 The Script card shows it before the session ("Desired pace: 130 WPM (1,300 words in 10 min)").
 
-Filler markers inside sentences: `[um]` / `[uh]` = detected and confirmed by Whisper; `[um?]` =
-sounded like a filler but Whisper wasn't available to confirm (counted as `filler?`).
+Filler markers inside sentences: `[um]`, `[like]`, `[you know]`... = counted as a filler. A "like" / "so" /
+"you know" without brackets was used as an ordinary word ("I'd like to") and isn't counted.
 
 ### `script_loaded`: reply to `script` (and again once the comparison model has loaded)
 
@@ -193,7 +193,7 @@ sounded like a filler but Whisper wasn't available to confirm (counted as `fille
 `chunks` is the script split into parts (sentences, very short ones merged); `[]` = no script.
 `ready` is false while the comparison model is still loading.
 
-### `script_position`: at most every 1.5 s while new words arrive (only with a script)
+### `script_position`: at most every 0.5 s while new words arrive (only with a script)
 
 ```json
 {"type": "script_position", "position": 6, "best": 6, "status": "jumped ahead",
@@ -245,12 +245,11 @@ Their cooldowns stop the same cue from repeatedly interrupting the presentation.
 
 ## How the transcript and fillers work
 
-From `experiments/gap_heuristic/SpeechtoText.py`:
+1. **Moonshine** (medium streaming, on-device) produces the transcript: partial text while you talk, a
+   finished line at each pause. It's biased towards writing um / uh, which it otherwise tends to leave out.
+2. An um / uh that at least two partials showed but the finished line dropped is put back.
+3. Fillers are found in the text (`fillers.py`): um / uh / erm / hmm always count; "like", "so" and
+   "you know" only when the neighbouring words say they're fillers.
+4. Alerts and live counts come from the partials, the final totals from finished lines only.
 
-1. **Vosk** (`experiments/gap_heuristic/vosk-model-small-en-us-0.15`) produces the transcript and
-   counts the filler words it writes: um, uh, like, you know, so.
-2. Vosk often drops um/uh, so two checks look for them:
-   - a **gap** between words where the webrtcvad still heard voice
-   - a long **near-miss word** ("a", "im", "ah", "huh", ...) that is probably a filler
-3. Each suspicious clip gets a second opinion from **Whisper** `tiny.en`, prompted to write fillers.
-   It's downloaded on first run (~75 MB); without it, suspicious clips become `[um?]`.
+Measured accuracy, delay and cost: `service/benchmarks/README.md`.

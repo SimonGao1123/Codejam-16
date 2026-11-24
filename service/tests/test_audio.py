@@ -369,7 +369,7 @@ def test_session_score_has_recording_relative_checkpoints():
 
 
 def test_transcript_and_filler_counts_from_speech(stt_model, tmp_path):
-    speech = say("So I think, you know, the results are like really good. So that is the plan.", tmp_path)
+    speech = say("So I think, you know, the results were good. It was like really big. So that is the plan.", tmp_path)
     board = AlertBoard()
     a = AudioAnalyzer(stt_model, board)
     msgs = feed_all(a, np.concatenate([speech, np.zeros(SR, dtype=np.float32)]))
@@ -387,7 +387,7 @@ def test_transcript_and_filler_counts_from_speech(stt_model, tmp_path):
 
 
 def test_filler_counts_go_up_before_the_sentence_ends(stt_model, tmp_path):
-    speech = say("I really like this idea and I like the plan", tmp_path)       # no pause: stays partial
+    speech = say("It was like really big and it was like really loud in the room", tmp_path)  # no pause: stays partial
     a = AudioAnalyzer(stt_model, AlertBoard())
     msgs = [m for m in feed_all(a, speech) if m["type"] == "transcript"]
     assert not any(m["new_sentences"] for m in msgs)                           # sentence not finished yet
@@ -431,8 +431,15 @@ def test_voice_threshold_and_settings_survive_new_session(stt_model):
     assert a.voice.pitch_jump_semitones == 4 and a.voice.volume_jump_db == 12
 
 
+def test_ordinary_like_is_not_counted(stt_model, tmp_path):
+    a = AudioAnalyzer(stt_model, AlertBoard())
+    msgs = feed_all(a, say("I really like this idea and I would like to see the plan", tmp_path)) + a.finish()
+    assert "like" in "".join(s for m in msgs if m["type"] == "transcript" for s in m["new_sentences"])
+    assert msgs[-1]["total"] == 0
+
+
 def test_filler_alert_follows_rule_but_still_counts(stt_model, tmp_path):
-    speech = say("I like this and I like that", tmp_path)
+    speech = say("It was like really big and it was like really loud", tmp_path)
     board = AlertBoard()
     a = AudioAnalyzer(stt_model, board)
     a.apply_settings(voice_rules(filler={"enabled": False}))

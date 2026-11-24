@@ -1,7 +1,7 @@
 import math
 
 from presentation_service.scoring import score_presentation
-from presentation_service.webcam_analysis import WebcamAnalyzer
+from presentation_service.webcam_analysis import WebcamAnalyzer, compact_frame, trim_state
 
 FPS = 30
 BASE_HAND = [(-0.6, -0.9), (-0.3, -1.8), (0, -1.9), (0.4, -1.5), (0, -1)]   # tips + knuckle vs wrist
@@ -365,3 +365,33 @@ def test_voice_alerts_show_while_waiting_to_calibrate():
     state = a.process(frame(0.0, hands=0), extra_alerts=["Keep talking"])
     assert state["calibration"]["phase"] == "arming" and state["alerts"] == ["Keep talking"]
 
+
+def test_compact_frames_give_the_same_states_as_every_landmark():
+    full, small = WebcamAnalyzer(), WebcamAnalyzer()
+    for a in (full, small):
+        a.calibrate(0)
+    for i in range(8 * FPS):
+        t = i / FPS
+        f = frame(t, lwrist=(0.4 + 0.1 * math.sin(6 * t), 0.8), face=t < 6, hands=1 if 5 < t < 5.5 else 2)
+        c = compact_frame(f)
+        assert len(c["pose"]) == 4 and all(len(h["points"]) == 6 for h in c["hands"])
+        assert small.process(c) == full.process(f)
+
+
+def test_replies_only_have_what_changed():
+    a, sent = WebcamAnalyzer(), {}
+    first = trim_state(a.process(frame(0.0)), None, sent)
+    assert {"lines", "alerts", "calibration", "rest_circles", "hand_labels"} <= first.keys()
+    again = trim_state(a.process(frame(1 / FPS)), None, sent)
+    assert again["type"] == "state" and again["t"] == 1 / FPS
+    assert not {"alerts", "calibration", "hand_labels"} & again.keys()
+
+
+def test_replies_leave_out_what_the_app_is_not_showing():
+    a, sent = WebcamAnalyzer(), {}
+    state = trim_state(a.process(frame(0.0)), set(), sent)
+    assert state["lines"] == [] and state["hand_labels"] == [] and "calibration" in state
+    state = trim_state(a.process(frame(1 / FPS)), {"tilt", "hand_angles"}, sent)      # turned on in Settings
+    assert [l["stat"] for l in state["lines"]] == ["tilt"] and len(state["hand_labels"]) == 2
+    no_body = {**frame(2 / FPS), "pose": None}
+    assert "body" in [l["stat"] for l in trim_state(a.process(no_body), {"hands"}, sent)["lines"]]

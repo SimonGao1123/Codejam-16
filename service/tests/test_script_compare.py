@@ -156,3 +156,39 @@ def test_tracking_starting_mid_session_does_not_mark_earlier_parts_skipped(stt_m
     msgs = feed_realtime(a, np.zeros(SR, dtype=np.float32)) + a.finish()
     last = [m for m in msgs if m["type"] == "script_position"][-1]
     assert last["position"] >= 1 and last["skipped"] == []        # parts 1-2 visited, not skipped
+
+
+def test_position_follows_the_sentence_being_said(embed):
+    t = ScriptTracker(CHUNKS, embed)
+    said = (CHUNKS[0] + " " + CHUNKS[1]).split()
+    t.update(" ".join(said), now=1.0)
+    t.update(" ".join(said), now=3.0)
+    half = CHUNKS[2].split()[:7]                        # under half of part 3 is enough to be on it
+    assert t.update(" ".join(said + half), now=5.0).position == 2
+
+
+def test_catching_up_marks_what_was_said_and_does_not_alert(embed):
+    t = ScriptTracker(CHUNKS, embed)
+    t.catch_up(" ".join(CHUNKS[:4] + CHUNKS[6:8]), now=100.0)
+    assert t.position >= 7 and {4, 5} <= t.skipped and 1 in t.visited
+    assert t.off_since is None and t.entered_at == 100.0
+
+
+def test_a_script_part_of_only_fillers_or_symbols_is_tolerated(embed):
+    t = ScriptTracker(["Um, so, like.", "*** !!! ***", "The results are good this year."], embed)
+    assert t.update("and the results are good this year", now=1.0) is not None
+
+
+def test_editing_the_script_only_embeds_what_changed(embed):
+    embedded = []
+
+    def counting(texts):
+        embedded.extend(texts)
+        return embed(texts)
+
+    first = ScriptTracker(CHUNKS, counting)
+    everything, edited = len(embedded), CHUNKS[:-1] + ["Thank you, and have a wonderful evening everyone."]
+    embedded.clear()
+    second = ScriptTracker(edited, counting, known=first.vectors)
+    assert len(embedded) < everything / 3
+    assert np.allclose(second.chunk_vecs, ScriptTracker(edited, embed).chunk_vecs, atol=1e-3)

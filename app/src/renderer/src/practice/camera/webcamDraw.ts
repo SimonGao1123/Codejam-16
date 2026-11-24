@@ -5,7 +5,7 @@ import { FaceLandmarker } from '@mediapipe/tasks-vision'
 
 import type { Preferences } from '../../liveAlert/ruleDefinitions'
 import type { SkeletonPart, StatPart } from '../../liveAlert/webcamParts'
-import type { FrameMessage, OverlayColor, StateMessage } from './webcamProtocol'
+import type { FrameData, OverlayColor, StateMessage } from './webcamProtocol'
 
 type Shape = { connections: [number, number][]; dots: number[] }
 
@@ -137,7 +137,7 @@ function join(
 /** Pose and face (green) and hand (yellow) skeletons, drawn straight from the landmarks. */
 export function drawLandmarks(
   ctx: CanvasRenderingContext2D,
-  frame: FrameMessage,
+  frame: FrameData,
   parts: Preferences['skeletonParts']
 ): void {
   if (frame.pose) skeleton(ctx, frame.pose, join(POSE_PARTS, parts), COLORS.green)

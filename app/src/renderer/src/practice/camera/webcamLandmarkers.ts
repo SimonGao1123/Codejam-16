@@ -6,7 +6,7 @@ import { FaceLandmarker, HandLandmarker, PoseLandmarker } from '@mediapipe/tasks
 import wasmLoaderPath from '@mediapipe/tasks-vision/vision_wasm_internal.js?url'
 import wasmBinaryPath from '@mediapipe/tasks-vision/vision_wasm_internal.wasm?url'
 
-import type { FaceData, FrameMessage, HandData, Point3, PoseLandmark } from './webcamProtocol'
+import type { FaceData, FrameData, HandData, Point3, PoseLandmark } from './webcamProtocol'
 
 // the package doesn't export its WasmFileset type
 const WASM: Parameters<typeof PoseLandmarker.createFromOptions>[0] = {
@@ -141,7 +141,7 @@ function findFace(
 }
 
 /** Runs all three models on the current video frame. `t` is in seconds. */
-export function detect(lm: Landmarkers, video: HTMLVideoElement, t: number): FrameMessage {
+export function detect(lm: Landmarkers, video: HTMLVideoElement, t: number): FrameData {
   const ms = t * 1000
   const poseRes = lm.pose.detectForVideo(video, ms)
   const handRes = lm.hands.detectForVideo(video, ms)
@@ -167,7 +167,6 @@ export function detect(lm: Landmarkers, video: HTMLVideoElement, t: number): Fra
   }
 
   return {
-    type: 'frame',
     t,
     width: video.videoWidth,
     height: video.videoHeight,

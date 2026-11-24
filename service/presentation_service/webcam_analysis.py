@@ -23,10 +23,15 @@ from types import SimpleNamespace
 
 import numpy as np
 
-L_SHOULDER, R_SHOULDER, L_WRIST, R_WRIST = 11, 12, 15, 16      # pose landmarks
-HAND_WRIST, HAND_MIDDLE_MCP = 0, 9                             # hand landmarks
-FOREHEAD, CHIN = 10, 152                                       # face landmarks
-FACE_EDGES = (FOREHEAD, CHIN, 234, 454)
+# the MediaPipe landmarks the analysis uses; the app sends only these, in this order (docs/webcam-protocol.md)
+POSE_LANDMARKS = (11, 12, 15, 16)                              # shoulders, wrists
+HAND_LANDMARKS = (0, 4, 8, 12, 20, 9)                          # wrist, four fingertips, middle knuckle
+FACE_LANDMARKS = (10, 152, 234, 454)                           # forehead, chin, both sides
+EYE_BLENDSHAPES = ("eyeLookDownLeft", "eyeLookDownRight")
+# where they are in those lists
+L_SHOULDER, R_SHOULDER, L_WRIST, R_WRIST = range(4)
+HAND_WRIST, HAND_MIDDLE_MCP = 0, 5
+FOREHEAD, CHIN = 0, 1
 FRAMING_MARGIN = 0.03
 MIN_FACE_HEIGHT = 0.05        # forehead->chin share of the frame height; smaller = too far away
 
@@ -54,7 +59,7 @@ REPEAT_DIP = 0.3            # similarity must first drop below this before a lat
 REPEAT_DETREND_S = 3.0      # moving average subtracted before the check; >= longest cycle so cycles survive
 # Finger points tracked relative to the wrist, in hand lengths (wrist -> middle knuckle):
 # thumb, index, middle and pinky tips + middle knuckle (hand orientation / wrist bend).
-FINGER_POINTS = (4, 8, 12, 20, 9)
+FINGER_POINTS = slice(1, 6)
 CALIBRATE_DELAY_S = 2.0     # default pause before recording (the app's session calibration uses 0)
 CALIBRATE_S = 2.0           # default recording length (the app's session calibration uses 3 s)
 # "when ready" calibration (start of each session): recording only starts once the face, both
@@ -97,9 +102,35 @@ class Alert:
         self.bad_since, self.visible_until, self.showing, self.ready_at = None, 0.0, False, 0.0
 
 
+def compact_frame(msg):
+    """A frame with every MediaPipe landmark (older recordings) -> the few values the app sends now."""
+    pose, face = msg.get("pose"), msg.get("face")
+    if pose and len(pose) > len(POSE_LANDMARKS):
+        pose = [[pose[i][0], pose[i][1], pose[i][3]] for i in POSE_LANDMARKS]
+    hands = [{"side": h["handedness"][0], "points": [h["landmarks"][i][:2] for i in HAND_LANDMARKS]}
+             if "landmarks" in h else h for h in msg.get("hands") or []]
+    if face and "landmarks" in face:
+        face = {"points": [face["landmarks"][i] for i in FACE_LANDMARKS],
+                "eyes_down": [face["blendshapes"].get(b, 0) for b in EYE_BLENDSHAPES]}
+    return {**msg, "pose": pose, "hands": hands, "face": face}
+
+
+def trim_state(state, display, sent):
+    """What the app doesn't have yet: only the status lines / circles / labels it's showing (`display`:
+    part ids, None = all), and only the fields that changed since the last reply (`sent`, updated)."""
+    if display is not None:
+        shown = lambda stat: ("tilt" in display or "hands" in display) if stat == "body" else stat in display  # noqa: E731
+        state = {**state, "lines": [l for l in state["lines"] if shown(l["stat"])],
+                 "rest_circles": state["rest_circles"] if "rest" in display else [],
+                 "hand_labels": state["hand_labels"] if "hand_angles" in display else []}
+    changed = {k: v for k, v in state.items() if k in ("type", "t") or sent.get(k) != v}
+    sent.update(changed)
+    return changed
+
+
 def points(raw):
-    """[[x, y, z(, visibility)], ...] -> objects with .x .y .z .visibility, like MediaPipe's."""
-    return [SimpleNamespace(x=p[0], y=p[1], z=p[2], visibility=p[3] if len(p) > 3 else 1.0) for p in raw]
+    """[[x, y(, visibility)], ...] -> objects with .x .y .visibility, like MediaPipe's."""
+    return [SimpleNamespace(x=p[0], y=p[1], visibility=p[2] if len(p) > 2 else 1.0) for p in raw]
 
 
 def shoulder_tilt(lm, w, h):
@@ -119,9 +150,9 @@ def inside_frame(x, y):
 def face_in_frame(face):
     if not face:
         return False
-    landmarks = face["landmarks"]
-    return (landmarks[CHIN][1] - landmarks[FOREHEAD][1] >= MIN_FACE_HEIGHT
-            and all(inside_frame(*landmarks[i][:2]) for i in FACE_EDGES))
+    edges = face["points"]
+    return (edges[CHIN][1] - edges[FOREHEAD][1] >= MIN_FACE_HEIGHT
+            and all(inside_frame(p[0], p[1]) for p in edges))
 
 
 def shoulders_in_frame(pose):
@@ -134,13 +165,12 @@ def shoulders_in_frame(pose):
 def head_pitch(face, w, h):
     """Head pitch in degrees from the forehead->chin line; grows as the head tips down.
     Face landmark z is in roughly the same units as x (smaller = closer to camera)."""
-    top, chin = face[FOREHEAD], face[CHIN]
-    return math.degrees(math.atan2((chin.z - top.z) * w, (chin.y - top.y) * h))
+    (_, top_y, top_z), (_, chin_y, chin_z) = face["points"][FOREHEAD], face["points"][CHIN]
+    return math.degrees(math.atan2((chin_z - top_z) * w, (chin_y - top_y) * h))
 
 
-def eyes_down(blendshapes):
-    """blendshapes: {name: score}."""
-    return (blendshapes.get("eyeLookDownLeft", 0) + blendshapes.get("eyeLookDownRight", 0)) / 2
+def eyes_down(face):
+    return sum(face["eyes_down"]) / 2
 
 
 def hand_angle(hand, w, h):
@@ -213,23 +243,24 @@ class HandMotion:
         if mask.mean() < REPEAT_MIN_COVERAGE:
             return 0.0
         pts = np.array([v for v in values if v is not None])
-        sig = np.column_stack([np.interp(grid, times[mask], pts[:, j]) for j in range(pts.shape[1])])
+        sig = resample(grid, times[mask], pts)
         # subtract a moving average so drift and sudden repositioning (arm sinking, moving the hand
         # somewhere new) aren't mistaken for, or hide, a cycle
         k = int(REPEAT_DETREND_S * self.RATE) | 1
-        padded = np.pad(sig, ((k // 2, k // 2), (0, 0)), mode="edge")
-        kernel = np.ones(k) / k
-        sig = sig - np.column_stack([np.convolve(padded[:, j], kernel, "valid") for j in range(sig.shape[1])])
-        if math.sqrt((sig * sig).sum(axis=1).mean()) < min_amp:
-            return 0.0
+        padded = np.pad(sig, ((k // 2 + 1, k // 2), (0, 0)), mode="edge")
+        padded[0] = 0
+        sums = padded.cumsum(axis=0)
+        sig = sig - (sums[k:] - sums[:-k]) / k
+        energy = np.concatenate(([0.0], (sig * sig).sum(axis=1).cumsum()))
         n = len(sig)
+        if math.sqrt(energy[-1] / n) < min_amp:
+            return 0.0
         lo, hi = (int(x * self.RATE) for x in REPEAT_LAGS_S)
         # similarity of the path with itself shifted by k samples, normalized by both overlapping parts
         # so it stays within -1..1 (at least half the window always overlaps)
-        ac = []
-        for k in range(min(hi + 2, n // 2)):
-            a, b = sig[:n - k], sig[k:]
-            ac.append(float((a * b).sum() / (math.sqrt((a * a).sum() * (b * b).sum()) + 1e-12)))
+        lags = np.arange(min(hi + 2, n // 2))
+        products = sum(np.correlate(c, c, "full")[n - 1:n - 1 + len(lags)] for c in sig.T)
+        ac = (products / (np.sqrt(energy[n - lags] * (energy[n] - energy[lags])) + 1e-12)).tolist()
         # a real repeat is a peak that comes after the similarity has dropped off
         best, dipped = 0.0, False
         for k in range(1, len(ac) - 1):
@@ -239,11 +270,20 @@ class HandMotion:
         return best
 
 
+def resample(grid, times, values):
+    """np.interp for every column of `values` at once."""
+    right = np.searchsorted(times, grid, side="right").clip(1, len(times) - 1) if len(times) > 1 else np.zeros(len(grid), int)
+    left = np.maximum(right - 1, 0)
+    gap = times[right] - times[left]
+    part = ((grid - times[left]) / np.where(gap > 0, gap, 1)).clip(0, 1)[:, None]
+    return values[left] * (1 - part) + values[right] * part
+
+
 def finger_features(hand, w, h):
     """Wrist pixel position and FINGER_POINTS relative to the wrist, in hand lengths (flat array)."""
     pts = np.array([(p.x * w, p.y * h) for p in hand])
     size = np.linalg.norm(pts[HAND_MIDDLE_MCP] - pts[HAND_WRIST]) or 1.0
-    return pts[HAND_WRIST], ((pts[list(FINGER_POINTS)] - pts[HAND_WRIST]) / size).ravel()
+    return pts[HAND_WRIST], ((pts[FINGER_POINTS] - pts[HAND_WRIST]) / size).ravel()
 
 
 def match_hands(hands, pose_wrists_px, w, h):
@@ -511,6 +551,7 @@ class WebcamAnalyzer:
 
     def process(self, msg, extra_lines=(), extra_alerts=()):
         """One `frame` message -> one `state` message. extra_* come from the audio side."""
+        msg = compact_frame(msg)
         now, w, h = msg["t"], msg["width"], msg["height"]
         if self.scoring and (now < self.last_t or now - self.last_t > HAND_GRACE_S):
             self._incident_since.clear()
@@ -534,7 +575,7 @@ class WebcamAnalyzer:
         wrists = [None, None]
         base = self.calib.baseline
         calibrating = self.calib.busy
-        hand_points = [points(hand["landmarks"]) for hand in hands]
+        hand_points = [points(hand["points"]) for hand in hands]
 
         # Shoulder-relative hand coordinates only make sense when both shoulders are tracked.
         # Without that stable reference, omit hand-motion scoring for this frame.
@@ -588,12 +629,12 @@ class WebcamAnalyzer:
         for hand, pts in zip(hands, hand_points):
             angle = hand_angle(pts, w, h)
             hand_labels.append({"x": pts[HAND_WRIST].x, "y": pts[HAND_WRIST].y,
-                                "text": f"{hand['handedness'][0]} {angle:+.0f} deg"})
+                                "text": f"{hand['side']} {angle:+.0f} deg"})
 
         # eye level (face landmarks + blendshapes)
         if face_visible:
-            pitch = head_pitch(points(face["landmarks"]), w, h)
-            eyes = eyes_down(face["blendshapes"])
+            pitch = head_pitch(face, w, h)
+            eyes = eyes_down(face)
             if base and "pitch" in base:
                 down, eyes_off = pitch - base["pitch"], eyes - base["eyes"]
                 down_bad = down > self.limits["look_down"] or eyes_off > EYES_DOWN_MAX

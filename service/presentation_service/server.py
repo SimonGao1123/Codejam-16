@@ -27,7 +27,7 @@ from .scoring import score_presentation
 from .script_compare import Embedder
 from .transcript import load_moonshine
 from .voice import calibrate_voice, parse_voice_baseline
-from .webcam_analysis import WebcamAnalyzer
+from .webcam_analysis import WebcamAnalyzer, trim_state
 
 log = logging.getLogger("presentation_service")
 
@@ -72,6 +72,7 @@ class Session:
 
 async def webcam_connection(ws, session):
     log.info("webcam client connected")
+    display, sent = None, {}                             # what this client shows, and has already been told
     async for raw in ws:
         msg = json.loads(raw)
         if msg["type"] == "frame":
@@ -81,13 +82,15 @@ async def webcam_connection(ws, session):
                 extra_lines=[{"stat": "voice", "text": voice, "color": "white"}] if voice else [],
                 extra_alerts=session.alerts.active(),
             )
-            await ws.send(json.dumps(state))
+            await ws.send(json.dumps(trim_state(state, display, sent), separators=(",", ":")))
         elif msg["type"] == "calibrate":
             session.webcam.calibrate(msg.get("t"), msg.get("delay"), msg.get("duration"),
                                      when_ready=bool(msg.get("when_ready")),
                                      request_id=msg.get("request_id"))
         elif msg["type"] == "settings":
             session.apply_settings(msg["rules"])
+            if msg.get("display") is not None:
+                display = set(msg["display"])
         elif msg["type"] == "flush":
             # WebSocket messages are processed in order. This acknowledgement means every frame
             # sent before `flush` has updated the analyzer before the audio side scores it.
@@ -274,6 +277,7 @@ async def main(host="127.0.0.1", port=8766):
             # the app reloaded or quit without closing the socket; it reconnects on its own
             log.info("%s connection dropped without closing", path)
 
-    async with serve(handler, host, port, max_size=2**22):
+    # no compression: it's all on this machine, so squeezing every frame and audio chunk only costs time
+    async with serve(handler, host, port, max_size=2**22, compression=None):
         log.info("listening on ws://%s:%d  (/webcam, /audio)", host, port)
         await asyncio.Future()

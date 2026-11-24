@@ -15,7 +15,7 @@ computer: no cloud, no account.
   no / too fast / repeated hand movement (MediaPipe pose, hands and face on the GPU)
 - **Voice:** live pitch graph, pitch and volume spikes, speaking too quietly
 - **Transcript & filler words:** live transcript with a counter for um, uh, like, you know, so
-  (Vosk speech-to-text + Whisper double-checks hesitations)
+  (Moonshine speech-to-text, on-device)
 - **Script tracking (optional):** paste your script or attach a PDF; the app shows which part
   you're on and warns when you skip ahead, go back, go off script, or get stuck
 - **Live alerts:** turn each alert on/off and tune its threshold, timing and style (banner,
@@ -51,24 +51,9 @@ The app starts the Python service in the background and stops it when you close 
 service's log appears in the same terminal, prefixed `[service]`. On macOS, allow camera and
 microphone access when asked.
 
-**First run** downloads two small models (needs internet once):
-Whisper `tiny.en` (~75 MB, to `~/.cache/huggingface/`) and the script comparison model
-all-MiniLM-L6-v2 (~90 MB, to `~/.cache/fastembed/`). The app works while they download; filler
-double-checking and script tracking switch on when they're ready.
-
-### Optional: more accurate speech-to-text
-
-The repo includes Vosk's small English model, which the service uses by default. For better
-transcripts, download the large model (1.8 GB download, 2.7 GB unzipped) into `models/`. The
-service uses it automatically when it's there (it's git-ignored):
-
-```sh
-cd models
-curl -LO https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
-unzip vosk-model-en-us-0.22.zip && rm vosk-model-en-us-0.22.zip
-```
-
-It makes the service slower to start (several seconds to load).
+**First run** downloads two models (needs internet once): Moonshine's streaming speech-to-text model
+and the script comparison model all-MiniLM-L6-v2 (~90 MB, to `~/.cache/fastembed/`). Script tracking
+switches on when its model is ready.
 
 ## Using it
 
@@ -108,7 +93,7 @@ It makes the service slower to start (several seconds to load).
 | `docs/` | Message formats between the app and the service (`webcam-protocol.md`, `audio-protocol.md`) |
 | `website/` | Product website with the downloads (Next.js, deployed by Vercel) |
 | `experiments/` | Standalone prototypes the features were built from (each a separate uv project) |
-| `models/` | MediaPipe models (+ the optional large Vosk model) |
+| `models/` | MediaPipe models |
 
 **How it fits together:** the app runs MediaPipe itself and sends only landmark numbers (never
 video) to the service at `ws://127.0.0.1:<port>/webcam`; it streams the microphone as raw 16 kHz
@@ -146,7 +131,8 @@ uv run --no-dev --with "pyinstaller>=6,<7" pyinstaller run_service.py --name pre
   --onedir --noconfirm --paths . --collect-all moonshine_voice --collect-all fastembed
 ```
 
-Keep the large Vosk model out of `models/` when building: everything in there goes into the app.
+Keep other files (e.g. Vosk's models for the benchmarks) out of `models/` when building: everything in
+there goes into the app.
 
 To release, set `version` in `app/package.json` and push the matching tag (e.g. `v1.0.0`). The
 Release workflow builds the macOS (Apple Silicon, macOS 15+), Windows and Linux installers and puts

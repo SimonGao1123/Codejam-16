@@ -5,11 +5,17 @@
 
 import { useEffect, useImperativeHandle, useRef } from 'react'
 
+import type { Preferences } from '../../liveAlert/ruleDefinitions'
 import { useAlertPreferences } from '../../liveAlert/useAlertPreferences'
 import { WebcamAnalysisClient } from '../camera/webcamAnalysisClient'
 import { drawLandmarks, drawOverlay } from '../camera/webcamDraw'
 import { createLandmarkers, detect, type Landmarkers } from '../camera/webcamLandmarkers'
-import type { ClientMessage, StateMessage } from '../camera/webcamProtocol'
+import {
+  compactFrame,
+  type ClientMessage,
+  type SettingsMessage,
+  type StateMessage
+} from '../camera/webcamProtocol'
 
 export interface WebcamStatus {
   ready: boolean // models loaded and camera frames being analysed
@@ -35,6 +41,13 @@ interface Props {
 }
 
 const STATUS_MS = 100
+
+function settingsMessage(preferences: Preferences): SettingsMessage {
+  const { rules, showStats, statParts, showSkeleton, skeletonParts } = preferences
+  const display = showStats ? Object.keys(statParts).filter((id) => statParts[id]) : []
+  if (showSkeleton && skeletonParts.rest) display.push('rest')
+  return { type: 'settings', rules, display }
+}
 
 export default function WebcamView({
   ref,
@@ -90,7 +103,7 @@ export default function WebcamView({
     let cancelled = false
     const client = new WebcamAnalysisClient()
     clientRef.current = client
-    client.setSettings({ type: 'settings', rules: preferencesRef.current.rules })
+    client.setSettings(settingsMessage(preferencesRef.current))
     createLandmarkers().then(
       (lm) => {
         if (cancelled) lm.close()
@@ -134,7 +147,7 @@ export default function WebcamView({
   // Live alerts changes: tell Python right away (the client also re-sends them after a reconnect)
   useEffect(() => {
     preferencesRef.current = preferences
-    clientRef.current?.setSettings({ type: 'settings', rules: preferences.rules })
+    clientRef.current?.setSettings(settingsMessage(preferences))
   }, [preferences])
 
   // per-frame analysis: while the session's camera stream is on
@@ -159,8 +172,9 @@ export default function WebcamView({
       lastTRef.current = t
 
       const frame = detect(landmarkers, video, t)
-      client.send(frame)
-      loggerRef.current?.(frame)
+      const message = compactFrame(frame)
+      client.send(message)
+      loggerRef.current?.(message)
       analysingRef.current = true
 
       if (canvas.width !== frame.width || canvas.height !== frame.height) {
