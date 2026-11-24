@@ -49,7 +49,7 @@ class AudioAnalyzer:
         self.reset()
 
     def apply_settings(self, rules):
-        """Live alerts settings for the voice, filler and script rules."""
+        """Settings for the voice, filler and script rules."""
         self.settings = rules
         self._configure_voice()
         self._configure_silence()
@@ -186,7 +186,7 @@ class AudioAnalyzer:
         self.voice = VoiceMonitor(
             baseline=voice_baseline, recording_baseline=recording_baseline
         )
-        self._configure_voice()                     # a new monitor keeps the Live alerts settings
+        self._configure_voice()                     # a new monitor keeps the Settings
         self._configure_silence()                   # and the room's measured silence level
         self.transcriber.reset()
         self.pending = np.zeros(0, dtype=np.float32)
@@ -374,7 +374,7 @@ class AudioAnalyzer:
 
     def desired_wpm(self):
         """The pace to aim for: script words / the time the user has, when both were given;
-        otherwise the Live alerts Target pace slider (default 140)."""
+        otherwise the Settings Target pace slider (default 140)."""
         if self.script_words and self.target_seconds:
             lo, hi = DESIRED_WPM_LIMITS
             return round(min(hi, max(lo, self.script_words * 60 / self.target_seconds)), 1)

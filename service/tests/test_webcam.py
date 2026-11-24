@@ -183,7 +183,7 @@ def test_repeated_wrist_flick_warns():
 
 
 def test_extra_lines_and_alerts_from_audio_side():
-    state = WebcamAnalyzer().process(frame(0.0), extra_lines=[{"text": "voice: 180 Hz", "color": "white"}],
+    state = WebcamAnalyzer().process(frame(0.0), extra_lines=[{"stat": "voice", "text": "voice: 180 Hz", "color": "white"}],
                                      extra_alerts=["Filler: um"])
     assert state["lines"][-1]["text"] == "voice: 180 Hz" and "Filler: um" in state["alerts"]
 

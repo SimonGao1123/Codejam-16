@@ -60,9 +60,9 @@ restarted: ..."), so a bad moment can't become the baseline. Posture / eye-level
 scoring are paused until calibration is done. Without `when_ready`, recording starts after
 `delay` seconds regardless (defaults 2 s pause, 2 s recording).
 
-### `settings`: the Live alerts tab's rules
+### `settings`: the Settings tab's rules
 
-Sent when the connection opens and whenever a rule changes on the Live alerts tab.
+Sent when the connection opens and whenever a rule changes on the Settings tab.
 
 ```json
 {"type": "settings", "rules": {
@@ -86,7 +86,7 @@ Sent when the connection opens and whenever a rule changes on the Live alerts ta
 
 `duration` = seconds the problem must last before the alert shows; `cooldown` = seconds after an
 alert disappears before it can show again; a disabled rule never shows. Without a `settings`
-message the service uses the same defaults as the Live alerts tab. The alert *style* (banner /
+message the service uses the same defaults as the Settings tab. The alert *style* (banner /
 compact / silent) isn't sent: Electron applies it when drawing `alerts`.
 
 ## Python → Electron
@@ -99,6 +99,7 @@ compact / silent) isn't sent: Electron applies it when drawing `alerts`.
   "t": 12.345,
   "lines": [
     {
+      "stat": "tilt",
       "text": "shoulder tilt: +1.2 deg  (+0.4 vs calibrated)",
       "color": "white"
     }
@@ -117,12 +118,12 @@ compact / silent) isn't sent: Electron applies it when drawing `alerts`.
 
 | Field                 | Drawn as                                                                                             |
 | --------------------- | ---------------------------------------------------------------------------------------------------- |
-| `lines`               | Status lines, top-left, under Electron's own FPS line. `color`: `white` / `red` / `yellow` / `green` |
+| `lines`               | Only with Live stats on (Settings tab): status lines, top-left, under Electron's own FPS line. `stat` (`tilt` / `hands` / `eye_level` / `voice`, or `body` = no body detected) lets each be turned off. `color`: `white` / `red` / `yellow` / `green` |
 | `alerts`              | Drawn in the Live alerts style: banner (wide yellow box), compact (pill at the top right), silent (none) |
-| `rest_circles`        | Thin circles; `r` is a fraction of the video width; `active` = green                                 |
-| `hand_labels`         | Yellow text next to the point (Electron offsets it by +10, +20 px)                                   |
+| `rest_circles`        | Only with Body skeleton and its hand rest spots on (Settings tab): thin circles; `r` is a fraction of the video width; `active` = green                                 |
+| `hand_labels`         | Only with Live stats and its hand angles on: yellow text next to the point (Electron offsets it by +10, +20 px)                                   |
 | `calibration.phase`   | `idle` / `arming` (waiting for the speaker: `message` drawn large) / `waiting` / `recording` (big countdown from `remaining`); also the status chip under the video |
-| `calibration.message` | Line under the status lines; green once `calibrated`, else yellow                                    |
+| `calibration.message` | Line under the status lines; only with Live stats and its calibration line on; green once `calibrated`, else yellow                                    |
 
 ## What the service computes
 

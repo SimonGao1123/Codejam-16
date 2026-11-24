@@ -1,7 +1,7 @@
 // Webcam video + analysis overlay for the practice session's camera stream. Models load and the
 // Python connection opens as soon as this mounts; while `stream` is set, every new camera frame
-// runs MediaPipe, is sent to Python (and the logger, when recording), and the skeleton plus
-// Python's latest overlay state are redrawn on the canvas.
+// runs MediaPipe, is sent to Python (and the logger, when recording), and Python's latest
+// overlay state (and the skeleton, if turned on) is redrawn on the canvas.
 
 import { useEffect, useImperativeHandle, useRef } from 'react'
 
@@ -56,7 +56,7 @@ export default function WebcamView({
   const wpmRef = useRef(wpm)
   const wpmUpdatedAtRef = useRef(wpmUpdatedAt)
   const paceRef = useRef({ avgWpm, desiredWpm })
-  // Live alerts tab settings: rules go to Python, the style decides how alerts are drawn
+  // Settings tab settings: rules go to Python, the rest decides what is drawn
   const [preferences] = useAlertPreferences()
   const preferencesRef = useRef(preferences)
 
@@ -169,7 +169,8 @@ export default function WebcamView({
       }
       const ctx = canvas.getContext('2d')!
       ctx.clearRect(0, 0, canvas.width, canvas.height)
-      drawLandmarks(ctx, frame)
+      const { showSkeleton, skeletonParts } = preferencesRef.current
+      if (showSkeleton) drawLandmarks(ctx, frame, skeletonParts)
       drawOverlay(
         ctx,
         client.latest,
@@ -181,7 +182,7 @@ export default function WebcamView({
           wpmUpdatedAt: wpmUpdatedAtRef.current,
           ...paceRef.current
         },
-        preferencesRef.current.style
+        preferencesRef.current
       )
     }
 

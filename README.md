@@ -17,7 +17,7 @@ computer: no cloud, no account.
 - **Script tracking (optional):** paste your script or attach a PDF; the app shows which part
   you're on and warns when you skip ahead, go back, go off script, or get stuck
 - **Live alerts:** turn each alert on/off and tune its threshold, timing and style (banner,
-  compact, silent) on the Live alerts tab
+  compact, silent) on the Settings tab
 - **Results:** a delivery score with feedback, plus a recording to play back with alert markers
 - **Upload & grade:** analyze a saved video or audio recording with the same delivery scoring
    checks as live practice; video also gets posture and hand tracking
@@ -81,7 +81,9 @@ It makes the service slower to start (several seconds to load).
 3. Present. Alerts pop up on the video; the pitch graph, transcript, filler counter and script
    progress update live.
 4. **End practice** to see your score, feedback and the playback.
-5. **Live alerts tab:** choose which alerts to show, how sensitive they are, and their style.
+5. **Settings tab:** choose which alerts to show, how sensitive they are, and their style. The
+   body skeleton and live stats over the webcam are off by default; turn them on here, and pick which parts
+   of each to show under Advanced settings.
 
 ### Grade a recording
 
@@ -89,11 +91,11 @@ It makes the service slower to start (several seconds to load).
    are analyzed for voice, transcript, posture, eye level and hand movement. Audio files (WAV,
    MP3, M4A) are analyzed for voice and transcript, without body-language checks.
 2. Optionally paste your script or attach a text-based PDF to enable script comparison. Enter a
-   target duration to set a speaking pace; otherwise, the pace target comes from the Live alerts
-   settings.
+   target duration to set a speaking pace; otherwise, the pace target comes from the Settings
+   tab.
 3. Start grading. The recording is analyzed locally, and the results show the same delivery score
    breakdown and feedback used for live practice. Which checks contribute to the score depends on
-   what the recording contains and which checks are enabled in Live alerts.
+   what the recording contains and which checks are enabled in Settings.
 
 ## Project layout
 
@@ -132,5 +134,17 @@ cd service && uv run python -m presentation_service --debug       # listens on 8
 cd app && ANALYSIS_SERVICE_PORT=8766 npm run dev
 ```
 
-Packaged builds (`build:mac` etc.) don't bundle the Python service yet: they expect `uv` and this
-repo's `service/` folder. Bundling it (e.g. with PyInstaller) is still to do.
+Packaged builds (`build:mac` etc.) include the Python service as a standalone program, so bundle it
+first (without it the app still builds, but has no analysis). It's built for the system you're on:
+
+```sh
+cd service
+uv run --no-dev --with "pyinstaller>=6,<7" pyinstaller run_service.py --name presentation-service \
+  --onedir --noconfirm --paths . --collect-all moonshine_voice --collect-all fastembed
+```
+
+Keep the large Vosk model out of `models/` when building: everything in there goes into the app.
+
+To release, set `version` in `app/package.json` and push the matching tag (e.g. `v1.0.0`). The
+Release workflow builds the macOS (Apple Silicon, macOS 15+), Windows and Linux installers and puts
+them in a draft GitHub release to check and publish.

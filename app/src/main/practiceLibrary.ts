@@ -82,6 +82,10 @@ export function registerPracticeLibraryIpc(): void {
       library.attempts = library.attempts.filter((attempt) => attempt.id !== id)
     })
   })
+  // deletes only the video (and its event log): the attempt keeps its score, name and folder
+  ipcMain.handle('practice-library:delete-recording', (_, id: string) =>
+    update(() => deleteSavedRecording(id))
+  )
   ipcMain.handle('practice-library:create-folder', (_, name: string) =>
     update((library) => {
       library.folders.push({ id: randomUUID(), name: validFolderName(library, name) })

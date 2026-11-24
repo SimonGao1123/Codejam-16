@@ -3,6 +3,8 @@
 // docs/webcam-protocol.md) and the overlay draws the cue in the chosen style.
 // `cue` is the exact text that pops up. Defaults match the service's built-in values.
 
+import type { SkeletonPart, StatPart } from './webcamParts'
+
 type RuleDefinition = {
   id: string
   group: 'Voice' | 'Posture' | 'Hands' | 'Speech' | 'Script'
@@ -227,7 +229,14 @@ export type RuleSettings = {
   cooldown: number
 }
 export type Style = 'banner' | 'compact' | 'silent'
-export type Preferences = { style: Style; rules: Record<RuleId, RuleSettings> }
+export type Preferences = {
+  style: Style
+  showSkeleton: boolean // draw the tracked body and hands over the webcam
+  showStats: boolean // list the measured values (WPM, posture, ...) over the webcam
+  skeletonParts: Record<SkeletonPart, boolean> // which of them, while turned on
+  statParts: Record<StatPart, boolean>
+  rules: Record<RuleId, RuleSettings>
+}
 
 export const styles = [
   { id: 'banner', label: 'Banner' },

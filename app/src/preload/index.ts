@@ -13,6 +13,8 @@ const api = {
     list: (): Promise<PracticeLibrary> => ipcRenderer.invoke('practice-library:list'),
     deleteAttempt: (id: string): Promise<PracticeLibrary> =>
       ipcRenderer.invoke('practice-library:delete-attempt', id),
+    deleteRecording: (id: string): Promise<PracticeLibrary> =>
+      ipcRenderer.invoke('practice-library:delete-recording', id),
     createFolder: (name: string): Promise<PracticeLibrary> =>
       ipcRenderer.invoke('practice-library:create-folder', name),
     renameFolder: (id: string, name: string): Promise<PracticeLibrary> =>
