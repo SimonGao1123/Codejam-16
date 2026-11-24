@@ -2,6 +2,8 @@
 
 # Colloquia (Codejam-16)
 
+**Website and downloads (Mac, Windows, Linux): https://colloquia-codejam-16.vercel.app/**
+
 A desktop app for rehearsing presentations. While you practise, it watches your posture, eye
 level and hands through the webcam, listens to your voice, transcribes what you say, counts filler
 words, follows along with your script, and pops up live alerts when something drifts. At the end
@@ -104,6 +106,7 @@ It makes the service slower to start (several seconds to load).
 | `app/` | Electron + React + TypeScript app: camera, MediaPipe, microphone capture, all the UI |
 | `service/` | Python analysis service the app talks to over local WebSockets (`service/README.md`) |
 | `docs/` | Message formats between the app and the service (`webcam-protocol.md`, `audio-protocol.md`) |
+| `website/` | Product website with the downloads (Next.js, deployed by Vercel) |
 | `experiments/` | Standalone prototypes the features were built from (each a separate uv project) |
 | `models/` | MediaPipe models (+ the optional large Vosk model) |
 
